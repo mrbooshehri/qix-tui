@@ -2,16 +2,15 @@
 package tui
 
 import (
-	"bufio"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mrbooshehri/qix-go/internal/models"
 	"github.com/mrbooshehri/qix-go/internal/storage"
 )
@@ -26,126 +25,9 @@ const (
 	yellow = "\x1b[38;5;220m"
 )
 
-type terminal struct {
-	state string
-}
-
-func openTerminal() (*terminal, error) {
-	in, err := os.Stdin.Stat()
-	if err != nil || in.Mode()&os.ModeCharDevice == 0 {
-		return nil, fmt.Errorf("the TUI requires an interactive terminal")
-	}
-	out, err := os.Stdout.Stat()
-	if err != nil || out.Mode()&os.ModeCharDevice == 0 {
-		return nil, fmt.Errorf("the TUI requires an interactive terminal")
-	}
-
-	stateCmd := exec.Command("stty", "-g")
-	stateCmd.Stdin = os.Stdin
-	state, err := stateCmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("read terminal state: %w", err)
-	}
-	rawCmd := exec.Command("stty", "raw", "-echo")
-	rawCmd.Stdin = os.Stdin
-	rawCmd.Stdout = io.Discard
-	rawCmd.Stderr = io.Discard
-	if err := rawCmd.Run(); err != nil {
-		return nil, fmt.Errorf("enable raw terminal mode: %w", err)
-	}
-
-	t := &terminal{state: strings.TrimSpace(string(state))}
-	fmt.Print("\x1b[?1049h\x1b[?25l")
-	return t, nil
-}
-
-func (t *terminal) close() {
-	fmt.Print("\x1b[0m\x1b[?25h\x1b[?1049l")
-	cmd := exec.Command("stty", t.state)
-	cmd.Stdin = os.Stdin
-	_ = cmd.Run()
-}
-
-func (t *terminal) size() (int, int) {
-	cmd := exec.Command("stty", "size")
-	cmd.Stdin = os.Stdin
-	b, err := cmd.Output()
-	if err != nil {
-		return 100, 30
-	}
-	fields := strings.Fields(string(b))
-	if len(fields) != 2 {
-		return 100, 30
-	}
-	rows, rowErr := strconv.Atoi(fields[0])
-	cols, colErr := strconv.Atoi(fields[1])
-	if rowErr != nil || colErr != nil || rows < 1 || cols < 1 {
-		return 100, 30
-	}
-	return cols, rows
-}
-
 type keyEvent struct {
 	name string
 	r    rune
-}
-
-func readKey(r *bufio.Reader) (keyEvent, error) {
-	b, err := r.ReadByte()
-	if err != nil {
-		return keyEvent{}, err
-	}
-	switch b {
-	case 3:
-		return keyEvent{name: "ctrl-c"}, nil
-	case 7:
-		return keyEvent{name: "cancel"}, nil
-	case 9:
-		return keyEvent{name: "tab"}, nil
-	case 13, 10:
-		return keyEvent{name: "enter"}, nil
-	case 127, 8:
-		return keyEvent{name: "backspace"}, nil
-	case 27:
-		next, err := r.ReadByte()
-		if err != nil {
-			return keyEvent{name: "esc"}, nil
-		}
-		if next != '[' {
-			return keyEvent{name: "esc"}, nil
-		}
-		direction, err := r.ReadByte()
-		if err != nil {
-			return keyEvent{name: "esc"}, nil
-		}
-		switch direction {
-		case 'A':
-			return keyEvent{name: "up"}, nil
-		case 'B':
-			return keyEvent{name: "down"}, nil
-		case 'C':
-			return keyEvent{name: "right"}, nil
-		case 'D':
-			return keyEvent{name: "left"}, nil
-		}
-		return keyEvent{name: "esc"}, nil
-	case ' ':
-		return keyEvent{name: "space", r: ' '}, nil
-	}
-	if b >= utf8.RuneSelf {
-		if err := r.UnreadByte(); err != nil {
-			return keyEvent{}, err
-		}
-		char, _, err := r.ReadRune()
-		if err != nil {
-			return keyEvent{}, err
-		}
-		return keyEvent{r: char}, nil
-	}
-	if b >= 32 {
-		return keyEvent{r: rune(b)}, nil
-	}
-	return keyEvent{}, nil
 }
 
 type taskItem struct {
@@ -187,36 +69,92 @@ type app struct {
 	message      string
 	isError      bool
 	showHelp     bool
+	width        int
+	height       int
+	section      int
+	sprintIndex  int
+	reportIndex  int
+	backupIndex  int
 }
+
+type tickMsg time.Time
+
+const (
+	sectionWorkspace = iota
+	sectionTracking
+	sectionSprints
+	sectionReports
+	sectionHealth
+)
 
 // Run starts the full-screen QIX interface. initialProject may be empty.
 func Run(store *storage.Storage, initialProject string) error {
-	term, err := openTerminal()
-	if err != nil {
-		return err
-	}
-	defer term.close()
-
-	a := &app{store: store, moduleIndex: -1}
+	a := &app{store: store, moduleIndex: -1, width: 100, height: 30}
 	if err := a.loadProjects(initialProject); err != nil {
 		return err
 	}
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		width, height := term.size()
-		fmt.Print(a.view(width, height))
-		key, err := readKey(reader)
-		if err != nil {
-			return err
-		}
-		quit, err := a.update(key)
+	_, err := tea.NewProgram(a, tea.WithAltScreen()).Run()
+	return err
+}
+
+func (a *app) Init() tea.Cmd { return tickCmd() }
+
+func tickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(now time.Time) tea.Msg { return tickMsg(now) })
+}
+
+func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tickMsg:
+		return a, tickCmd()
+	case tea.WindowSizeMsg:
+		a.width, a.height = msg.Width, msg.Height
+		return a, nil
+	case tea.KeyMsg:
+		key := bubbleKey(msg)
+		quit, err := a.updateKey(key)
 		if err != nil {
 			a.message, a.isError = err.Error(), true
 		}
 		if quit {
-			return nil
+			return a, tea.Quit
 		}
 	}
+	return a, nil
+}
+
+func (a *app) View() string { return a.view(a.width, a.height) }
+
+func bubbleKey(msg tea.KeyMsg) keyEvent {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		return keyEvent{name: "ctrl-c"}
+	case tea.KeyCtrlG:
+		return keyEvent{name: "cancel"}
+	case tea.KeyEsc:
+		return keyEvent{name: "esc"}
+	case tea.KeyTab:
+		return keyEvent{name: "tab"}
+	case tea.KeyEnter:
+		return keyEvent{name: "enter"}
+	case tea.KeyBackspace, tea.KeyDelete:
+		return keyEvent{name: "backspace"}
+	case tea.KeyUp:
+		return keyEvent{name: "up"}
+	case tea.KeyDown:
+		return keyEvent{name: "down"}
+	case tea.KeyLeft:
+		return keyEvent{name: "left"}
+	case tea.KeyRight:
+		return keyEvent{name: "right"}
+	case tea.KeySpace:
+		return keyEvent{name: "space", r: ' '}
+	case tea.KeyRunes:
+		if len(msg.Runes) > 0 {
+			return keyEvent{r: msg.Runes[0]}
+		}
+	}
+	return keyEvent{}
 }
 
 func (a *app) loadProjects(selectName string) error {
@@ -278,7 +216,7 @@ func (a *app) loadTasks() error {
 	return nil
 }
 
-func (a *app) update(key keyEvent) (bool, error) {
+func (a *app) updateKey(key keyEvent) (bool, error) {
 	if key.name == "ctrl-c" {
 		return true, nil
 	}
@@ -290,6 +228,23 @@ func (a *app) update(key keyEvent) (bool, error) {
 		a.message, a.isError = "", false
 		return false, a.updateConfirmation(key)
 	}
+	switch key.r {
+	case 'W':
+		a.section = sectionWorkspace
+		return false, nil
+	case 'T':
+		a.section = sectionTracking
+		return false, nil
+	case 'S':
+		a.section = sectionSprints
+		return false, nil
+	case 'R':
+		a.section = sectionReports
+		return false, nil
+	case 'H':
+		a.section = sectionHealth
+		return false, nil
+	}
 	if key.name == "esc" && a.showHelp {
 		a.showHelp = false
 		return false, nil
@@ -300,6 +255,10 @@ func (a *app) update(key keyEvent) (bool, error) {
 	if key.r == '?' {
 		a.showHelp = !a.showHelp
 		return false, nil
+	}
+	if a.section != sectionWorkspace {
+		a.message, a.isError = "", false
+		return false, a.updateSection(key)
 	}
 	a.message, a.isError = "", false
 	switch {
@@ -337,6 +296,16 @@ func (a *app) update(key keyEvent) (bool, error) {
 			return false, fmt.Errorf("select a module to edit")
 		}
 		a.startModuleEditForm()
+	case key.r == 'e' && a.focus == 0:
+		if a.project == nil {
+			return false, fmt.Errorf("select a project to edit")
+		}
+		a.startProjectEditForm()
+	case key.r == 'e' && a.focus == 2:
+		if len(a.tasks) == 0 {
+			return false, fmt.Errorf("select a task to edit")
+		}
+		a.startTaskEditForm()
 	case key.r == 'n':
 		if a.project == nil {
 			return false, fmt.Errorf("create a project first with p")
@@ -361,6 +330,30 @@ func (a *app) update(key keyEvent) (bool, error) {
 			prompt:   fmt.Sprintf("Remove %s and its %d task(s)? Type the module name", module.Name, len(module.Tasks)),
 			expected: module.Name,
 		}
+	case key.r == 'd' && a.focus == 2:
+		if len(a.tasks) == 0 {
+			return false, nil
+		}
+		task := a.tasks[a.taskIndex].task
+		a.confirmation = &confirmation{
+			kind:     "delete-task",
+			prompt:   fmt.Sprintf("Delete %s [%s]? Type the task ID", task.Title, task.ID),
+			expected: task.ID,
+		}
+	case key.r == 'l' && a.focus == 2:
+		return false, a.startTaskRelationForm("parent")
+	case key.r == 'y' && a.focus == 2:
+		return false, a.startTaskRelationForm("dependency")
+	case key.r == 'c' && a.focus == 2:
+		return false, a.startRecurrenceForm()
+	case key.r == 'u' && a.focus == 2:
+		return false, a.removeRecurrence()
+	case key.r == 'C' && a.focus == 2:
+		return false, a.completeTask()
+	case key.r == 't' && a.focus == 2:
+		return false, a.startTimeLogForm()
+	case key.r == 'o' && a.focus == 2:
+		return false, a.openSelectedJira()
 	case key.name == "space" || key.r == 'x':
 		return false, a.cycleStatus()
 	case key.r >= '1' && key.r <= '4':
@@ -378,6 +371,17 @@ func (a *app) startProjectForm() {
 			{label: "Name", required: true},
 			{label: "Description"},
 			{label: "Tags (comma-separated)"},
+		},
+	}
+}
+
+func (a *app) startProjectEditForm() {
+	a.form = &inputForm{
+		kind:  "edit-project",
+		title: "Edit project " + a.project.Name,
+		fields: []inputField{
+			{label: "Description", value: []rune(a.project.Description)},
+			{label: "Tags (comma-separated)", value: []rune(strings.Join(a.project.Tags, ", "))},
 		},
 	}
 }
@@ -407,13 +411,115 @@ func (a *app) startModuleEditForm() {
 }
 
 func (a *app) startTaskForm() {
+	location := "project level"
+	if a.moduleIndex >= 0 {
+		location = a.project.Modules[a.moduleIndex].Name
+	}
 	a.form = &inputForm{
 		kind:  "task",
-		title: "Create project-level task",
+		title: "Create task in " + location,
 		fields: []inputField{
 			{label: "Title", required: true},
+			{label: "Description"},
+			{label: "Status (todo/doing/done/blocked)", value: []rune("todo"), required: true},
+			{label: "Priority (low/medium/high)", value: []rune("medium"), required: true},
+			{label: "Estimated hours", value: []rune("0"), required: true},
+			{label: "Tags (comma-separated)"},
+			{label: "Jira issue"},
 		},
 	}
+}
+
+func (a *app) startTaskEditForm() {
+	task := a.tasks[a.taskIndex].task
+	a.form = &inputForm{
+		kind:  "edit-task",
+		title: "Edit task " + task.ID,
+		fields: []inputField{
+			{label: "Title", value: []rune(task.Title), required: true},
+			{label: "Description", value: []rune(task.Description)},
+			{label: "Status (todo/doing/done/blocked)", value: []rune(task.Status), required: true},
+			{label: "Priority (low/medium/high)", value: []rune(task.Priority), required: true},
+			{label: "Estimated hours", value: []rune(strconv.FormatFloat(task.EstimatedHours, 'f', -1, 64)), required: true},
+			{label: "Tags (comma-separated)", value: []rune(strings.Join(task.Tags, ", "))},
+			{label: "Jira issue", value: []rune(task.JiraIssue)},
+		},
+	}
+}
+
+func (a *app) startTaskRelationForm(relation string) error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	label := "Parent task ID"
+	kind := "task-parent"
+	if relation == "dependency" {
+		label, kind = "Dependency task ID", "task-dependency"
+	}
+	a.form = &inputForm{kind: kind, title: "Set " + relation + " for " + a.tasks[a.taskIndex].task.ID, fields: []inputField{{label: label, required: true}}}
+	return nil
+}
+
+func (a *app) startRecurrenceForm() error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	a.form = &inputForm{kind: "task-recurrence", title: "Schedule recurring task", fields: []inputField{{label: "Pattern (daily, weekly:day, monthly:day, interval:days)", required: true}}}
+	return nil
+}
+
+func (a *app) startTimeLogForm() error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	a.form = &inputForm{kind: "task-time", title: "Log time for " + a.tasks[a.taskIndex].task.ID, fields: []inputField{{label: "Hours", required: true}, {label: "Date (YYYY-MM-DD)", value: []rune(time.Now().Format("2006-01-02")), required: true}}}
+	return nil
+}
+
+func (a *app) removeRecurrence() error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	task := a.tasks[a.taskIndex].task
+	if err := a.store.RemoveTaskRecurrence(a.project.Name, task.ID); err != nil {
+		return err
+	}
+	if err := a.loadProject(); err != nil {
+		return err
+	}
+	a.message = "Removed recurrence from " + task.ID
+	return nil
+}
+
+func (a *app) completeTask() error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	task := a.tasks[a.taskIndex].task
+	err := a.store.UpdateTask(a.project.Name, task.ID, func(current *models.Task) error {
+		current.Status = models.StatusDone
+		if current.Recurrence != nil && current.Recurrence.Enabled {
+			pattern := string(current.Recurrence.Type)
+			if current.Recurrence.Value != "" {
+				pattern += ":" + current.Recurrence.Value
+			}
+			next, err := parseRecurrence(pattern, time.Now())
+			if err != nil {
+				return err
+			}
+			next.LastCompleted = time.Now().Format("2006-01-02")
+			current.Recurrence = &next
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if err := a.loadProject(); err != nil {
+		return err
+	}
+	a.message = "Completed task " + task.ID
+	return nil
 }
 
 func (a *app) updateForm(key keyEvent) error {
@@ -459,6 +565,24 @@ func (a *app) submitForm() error {
 		a.message = "Created project " + name
 		return nil
 	}
+	if form.kind == "edit-project" {
+		name := a.project.Name
+		description := strings.TrimSpace(string(form.fields[0].value))
+		tags := splitCommaSeparated(string(form.fields[1].value))
+		if err := a.store.UpdateProject(name, func(project *models.Project) error {
+			project.Description = description
+			project.Tags = tags
+			return nil
+		}); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.message = "Updated project " + name
+		return nil
+	}
 	if form.kind == "module" {
 		name := strings.TrimSpace(string(form.fields[0].value))
 		description := strings.TrimSpace(string(form.fields[1].value))
@@ -498,13 +622,146 @@ func (a *app) submitForm() error {
 		}
 		return nil
 	}
+	if form.kind == "sprint" {
+		name := strings.TrimSpace(string(form.fields[0].value))
+		startDate := strings.TrimSpace(string(form.fields[1].value))
+		endDate := strings.TrimSpace(string(form.fields[2].value))
+		start, err := time.Parse("2006-01-02", startDate)
+		if err != nil {
+			return fmt.Errorf("start date must use YYYY-MM-DD")
+		}
+		end, err := time.Parse("2006-01-02", endDate)
+		if err != nil {
+			return fmt.Errorf("end date must use YYYY-MM-DD")
+		}
+		if end.Before(start) {
+			return fmt.Errorf("end date must not be before start date")
+		}
+		if err := a.store.AddSprint(a.project.Name, models.Sprint{Name: name, StartDate: startDate, EndDate: endDate}); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.sprintIndex = len(a.project.Sprints) - 1
+		a.message = "Created sprint " + name
+		return nil
+	}
+	if form.kind == "backup-export" {
+		path := strings.TrimSpace(string(form.fields[0].value))
+		if path == "" {
+			return fmt.Errorf("export path cannot be empty")
+		}
+		if err := a.store.ExportBackup(path); err != nil {
+			return err
+		}
+		a.form = nil
+		a.message = "Exported backup to " + path
+		return nil
+	}
+
+	if form.kind == "task-parent" || form.kind == "task-dependency" {
+		task := a.tasks[a.taskIndex].task
+		otherID := strings.TrimSpace(string(form.fields[0].value))
+		var err error
+		if form.kind == "task-parent" {
+			err = a.store.LinkTaskAsChild(a.project.Name, task.ID, otherID)
+		} else {
+			err = a.store.AddTaskDependency(a.project.Name, task.ID, otherID)
+		}
+		if err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.message = "Updated relationships for " + task.ID
+		return nil
+	}
+	if form.kind == "task-recurrence" {
+		task := a.tasks[a.taskIndex].task
+		recurrence, err := parseRecurrence(strings.TrimSpace(string(form.fields[0].value)), time.Now())
+		if err != nil {
+			return err
+		}
+		if err := a.store.SetTaskRecurrence(a.project.Name, task.ID, recurrence); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.message = fmt.Sprintf("Scheduled %s; next due %s", task.ID, recurrence.NextDue)
+		return nil
+	}
+	if form.kind == "task-time" {
+		task := a.tasks[a.taskIndex].task
+		hours, err := strconv.ParseFloat(strings.TrimSpace(string(form.fields[0].value)), 64)
+		if err != nil || hours <= 0 {
+			return fmt.Errorf("hours must be a positive number")
+		}
+		date := strings.TrimSpace(string(form.fields[1].value))
+		if _, err := time.Parse("2006-01-02", date); err != nil {
+			return fmt.Errorf("date must use YYYY-MM-DD")
+		}
+		if err := a.store.AddTimeEntry(a.project.Name, task.ID, models.TimeEntry{Date: date, Hours: hours}); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.message = fmt.Sprintf("Logged %.2fh to %s", hours, task.ID)
+		return nil
+	}
 
 	title := strings.TrimSpace(string(form.fields[0].value))
+	description := strings.TrimSpace(string(form.fields[1].value))
+	status, err := parseTaskStatus(string(form.fields[2].value))
+	if err != nil {
+		return err
+	}
+	priority, err := parsePriority(string(form.fields[3].value))
+	if err != nil {
+		return err
+	}
+	estimated, err := strconv.ParseFloat(strings.TrimSpace(string(form.fields[4].value)), 64)
+	if err != nil || estimated < 0 {
+		return fmt.Errorf("estimated hours must be zero or a positive number")
+	}
+	tags := splitCommaSeparated(string(form.fields[5].value))
+	jira := strings.TrimSpace(string(form.fields[6].value))
+	if form.kind == "edit-task" {
+		taskID := a.tasks[a.taskIndex].task.ID
+		if err := a.store.UpdateTask(a.project.Name, taskID, func(task *models.Task) error {
+			task.Title = title
+			task.Description = description
+			task.Status = status
+			task.Priority = priority
+			task.EstimatedHours = estimated
+			task.Tags = tags
+			task.JiraIssue = jira
+			return nil
+		}); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.message = "Updated task " + taskID
+		return nil
+	}
 	moduleName := ""
 	if a.moduleIndex >= 0 {
 		moduleName = a.project.Modules[a.moduleIndex].Name
 	}
-	if err := a.store.AddTask(a.projects[a.projectIndex], moduleName, models.Task{Title: title}); err != nil {
+	if err := a.store.AddTask(a.projects[a.projectIndex], moduleName, models.Task{
+		Title: title, Description: description, Status: status, Priority: priority,
+		EstimatedHours: estimated, Tags: tags, JiraIssue: jira,
+	}); err != nil {
 		return err
 	}
 	a.form = nil
@@ -557,6 +814,63 @@ func (a *app) updateConfirmation(key keyEvent) error {
 			}
 			a.focus = 1
 			a.message = "Removed module " + moduleName
+		}
+		if confirm.kind == "delete-task" {
+			taskID := confirm.expected
+			if err := a.store.RemoveTask(a.project.Name, taskID); err != nil {
+				return err
+			}
+			a.confirmation = nil
+			if err := a.loadProject(); err != nil {
+				return err
+			}
+			a.focus = 2
+			a.message = "Removed task " + taskID
+		}
+		if confirm.kind == "delete-sprint" {
+			name := confirm.expected
+			if err := a.store.UpdateProject(a.project.Name, func(project *models.Project) error {
+				for i := range project.Sprints {
+					if project.Sprints[i].Name == name {
+						project.Sprints = append(project.Sprints[:i], project.Sprints[i+1:]...)
+						return nil
+					}
+				}
+				return fmt.Errorf("sprint %s not found", name)
+			}); err != nil {
+				return err
+			}
+			a.confirmation = nil
+			if err := a.loadProject(); err != nil {
+				return err
+			}
+			a.sprintIndex = min(a.sprintIndex, max(0, len(a.project.Sprints)-1))
+			a.message = "Removed sprint " + name
+		}
+		if confirm.kind == "restore-backup" {
+			backups, err := a.store.ListBackups()
+			if err != nil {
+				return err
+			}
+			var path string
+			for _, backup := range backups {
+				if backup.Name == confirm.expected {
+					path = backup.Path
+					break
+				}
+			}
+			if path == "" {
+				return fmt.Errorf("backup %s not found", confirm.expected)
+			}
+			safety, err := a.store.RestoreBackup(path)
+			if err != nil {
+				return fmt.Errorf("restore failed (safety backup: %s): %w", safety, err)
+			}
+			a.confirmation = nil
+			if err := a.loadProjects(""); err != nil {
+				return err
+			}
+			a.message = "Restored " + confirm.expected + " (safety backup: " + safety + ")"
 		}
 	default:
 		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
@@ -624,7 +938,10 @@ func (a *app) setStatus(status models.TaskStatus) error {
 
 func (a *app) view(width, height int) string {
 	if width < 72 || height < 22 {
-		return "\x1b[H\x1b[2J" + red + bold + "QIX needs a terminal at least 72x22. Resize the window or press q to quit." + reset
+		return red + bold + "QIX needs a terminal at least 72x22. Resize the window or press q to quit." + reset
+	}
+	if a.section != sectionWorkspace {
+		return a.sectionView(width, height)
 	}
 	contentHeight := height - 4
 	projectWidth := clamp(width/4, 24, 34)
@@ -699,42 +1016,66 @@ func (a *app) view(width, height int) string {
 	right := append(topRight, bottomRight...)
 
 	var b strings.Builder
-	b.WriteString("\x1b[H\x1b[2J")
-	b.WriteString(cyan + bold + fit(" QIX / PROJECT WORKSPACE", width) + reset + "\r\n")
+	b.WriteString(a.navigation(width, "WORKSPACE") + "\n")
 	summary := " No project selected"
 	if a.project != nil {
 		counts := a.project.CountByStatus()
 		summary = fmt.Sprintf(" %s  •  %d modules  •  %d tasks  •  %d doing  •  %.0f%% complete", a.project.Name, len(a.project.Modules), len(a.project.GetAllTasks()), counts[models.StatusDoing], a.project.GetCompletionPercentage())
 	}
-	b.WriteString(dim + fit(summary, width) + reset + "\r\n")
+	b.WriteString(dim + fit(summary, width) + reset + "\n")
 	for i := 0; i < contentHeight; i++ {
-		b.WriteString(left[i] + " " + right[i] + "\r\n")
+		b.WriteString(left[i] + " " + right[i] + "\n")
 	}
-	b.WriteString(dim + fit(" ↑/↓ move  tab focus  p project  m module  e edit module  d remove selected  n task  space status  ? help  q quit", width) + reset + "\r\n")
+	b.WriteString(dim + fit(" ↑/↓ move  tab focus  p project  m module  e edit  d remove  n task  space status  ? help  q quit", width) + reset + "\n")
 	footer := a.message
 	color := green
 	if a.isError {
 		color = red
 	}
+	b.WriteString(color + fit(" "+footer, width) + reset)
+	base := b.String()
+	if a.form != nil || a.confirmation != nil {
+		return a.modalView(width, height)
+	}
+	return base
+}
+
+func (a *app) modalView(width, height int) string {
+	modalWidth := clamp(width-12, 48, 72)
+	var title, prompt, value, hint string
 	if a.form != nil {
 		field := a.form.fields[a.form.index]
-		footer = fmt.Sprintf("%s [%d/%d] • %s: %s_  (enter next/save, ctrl-g cancel)", a.form.title, a.form.index+1, len(a.form.fields), field.label, string(field.value))
-		color = yellow
-		if a.isError {
-			footer = a.message + " • " + footer
-			color = red
-		}
+		title = a.form.title
+		prompt = fmt.Sprintf("%s  ·  field %d of %d", field.label, a.form.index+1, len(a.form.fields))
+		value = string(field.value) + "█"
+		hint = "enter next/save  •  esc or ctrl-g cancel"
+	} else {
+		title = "Confirm destructive action"
+		prompt = a.confirmation.prompt
+		value = string(a.confirmation.input) + "█"
+		hint = "type the exact value, then enter  •  esc cancels"
 	}
-	if a.confirmation != nil {
-		footer = a.confirmation.prompt + ": " + string(a.confirmation.input) + "_  (enter confirm, ctrl-g cancel)"
-		color = yellow
-		if a.isError {
-			footer = a.message + " • " + footer
-			color = red
-		}
+	if a.isError && a.message != "" {
+		hint = red + a.message + reset + "\n" + hint
 	}
-	b.WriteString(color + fit(" "+footer, width) + reset)
-	return b.String()
+	card := lipgloss.NewStyle().
+		Width(modalWidth).
+		Padding(1, 2).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("44")).
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("252")).
+		Render(
+			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("44")).Render(title) + "\n\n" +
+				prompt + "\n" +
+				lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).MarginTop(1).MarginBottom(1).
+					Background(lipgloss.Color("238")).Foreground(lipgloss.Color("229")).Render(value) + "\n" +
+				lipgloss.NewStyle().Faint(true).Render(hint),
+		)
+	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card,
+		lipgloss.WithWhitespaceChars("·"),
+		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")),
+	)
 }
 
 func (a *app) detailLines() []string {
@@ -742,9 +1083,11 @@ func (a *app) detailLines() []string {
 		return []string{
 			"Navigation: arrows or j/k; tab/left/right changes pane",
 			"p: new project    m: new module    n: new task",
-			"e: edit module    d: remove focused project/module",
+			"e: edit selected item    d: remove selected item",
 			"r: refresh from disk",
 			"space/x: cycle status    1-4: set status",
+			"l: set parent    y: add dependency    c/u: set/remove recurrence",
+			"C: complete task    t: log time    o: open Jira issue",
 			"1 todo  2 doing  3 done  4 blocked",
 			"?: close help    q: quit",
 		}
@@ -770,6 +1113,22 @@ func (a *app) detailLines() []string {
 	}
 	if len(task.Tags) > 0 {
 		lines = append(lines, "Tags: "+strings.Join(task.Tags, ", "))
+	}
+	if task.ParentID != "" {
+		lines = append(lines, "Parent: "+task.ParentID)
+	}
+	if len(task.Dependencies) > 0 {
+		lines = append(lines, "Depends on: "+strings.Join(task.Dependencies, ", "))
+	}
+	if task.Recurrence != nil && task.Recurrence.Enabled {
+		pattern := string(task.Recurrence.Type)
+		if task.Recurrence.Value != "" {
+			pattern += ":" + task.Recurrence.Value
+		}
+		lines = append(lines, fmt.Sprintf("Recurrence: %s    Next due: %s", pattern, task.Recurrence.NextDue))
+	}
+	if task.JiraIssue != "" {
+		lines = append(lines, "Jira: "+task.JiraIssue)
 	}
 	return lines
 }
@@ -911,6 +1270,71 @@ func splitCommaSeparated(value string) []string {
 		}
 	}
 	return result
+}
+
+func parseTaskStatus(value string) (models.TaskStatus, error) {
+	status := models.TaskStatus(strings.ToLower(strings.TrimSpace(value)))
+	switch status {
+	case models.StatusTodo, models.StatusDoing, models.StatusDone, models.StatusBlocked:
+		return status, nil
+	default:
+		return "", fmt.Errorf("status must be todo, doing, done, or blocked")
+	}
+}
+
+func parsePriority(value string) (models.Priority, error) {
+	priority := models.Priority(strings.ToLower(strings.TrimSpace(value)))
+	switch priority {
+	case models.PriorityLow, models.PriorityMedium, models.PriorityHigh:
+		return priority, nil
+	default:
+		return "", fmt.Errorf("priority must be low, medium, or high")
+	}
+}
+
+func parseRecurrence(pattern string, now time.Time) (models.Recurrence, error) {
+	parts := strings.SplitN(strings.ToLower(strings.TrimSpace(pattern)), ":", 2)
+	value := ""
+	if len(parts) == 2 {
+		value = parts[1]
+	}
+	recurrence := models.Recurrence{Value: value, Enabled: true}
+	switch parts[0] {
+	case "daily":
+		recurrence.Type = models.RecurDaily
+		recurrence.NextDue = now.AddDate(0, 0, 1).Format("2006-01-02")
+	case "weekly":
+		days := map[string]time.Weekday{"sunday": time.Sunday, "monday": time.Monday, "tuesday": time.Tuesday, "wednesday": time.Wednesday, "thursday": time.Thursday, "friday": time.Friday, "saturday": time.Saturday}
+		target, ok := days[value]
+		if !ok {
+			return recurrence, fmt.Errorf("weekly recurrence needs a weekday, for example weekly:monday")
+		}
+		recurrence.Type = models.RecurWeekly
+		delta := (int(target) - int(now.Weekday()) + 7) % 7
+		if delta == 0 {
+			delta = 7
+		}
+		recurrence.NextDue = now.AddDate(0, 0, delta).Format("2006-01-02")
+	case "monthly":
+		day, err := strconv.Atoi(value)
+		if err != nil || day < 1 || day > 31 {
+			return recurrence, fmt.Errorf("monthly recurrence needs a day from 1 to 31")
+		}
+		recurrence.Type = models.RecurMonthly
+		next := now.AddDate(0, 1, 0)
+		lastDay := time.Date(next.Year(), next.Month()+1, 0, 0, 0, 0, 0, next.Location()).Day()
+		recurrence.NextDue = time.Date(next.Year(), next.Month(), min(day, lastDay), 0, 0, 0, 0, next.Location()).Format("2006-01-02")
+	case "interval":
+		days, err := strconv.Atoi(value)
+		if err != nil || days < 1 {
+			return recurrence, fmt.Errorf("interval recurrence needs a positive day count")
+		}
+		recurrence.Type = models.RecurInterval
+		recurrence.NextDue = now.AddDate(0, 0, days).Format("2006-01-02")
+	default:
+		return recurrence, fmt.Errorf("recurrence must be daily, weekly:day, monthly:day, or interval:days")
+	}
+	return recurrence, nil
 }
 
 func progressBar(percent float64, width int) string {

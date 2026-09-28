@@ -165,3 +165,86 @@ func TestModuleCreateEditAndDeleteWorkflow(t *testing.T) {
 		t.Fatal("module still exists after confirmed removal")
 	}
 }
+
+func TestTaskCreateAndEditWorkflowUsesFullTaskFields(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatalf("config.Init() error: %v", err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatalf("storage.Init() error: %v", err)
+	}
+	store := storage.Get()
+	if _, err := store.CreateProject("launch", "", nil); err != nil {
+		t.Fatalf("CreateProject() error: %v", err)
+	}
+
+	a := &app{store: store, moduleIndex: -1, width: 100, height: 30}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatalf("loadProjects() error: %v", err)
+	}
+	a.startTaskForm()
+	values := []string{"Build API", "Public endpoint", "doing", "high", "3.5", "backend, urgent", "QIX-42"}
+	for i, value := range values {
+		a.form.fields[i].value = []rune(value)
+	}
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("create task submitForm() error: %v", err)
+	}
+	if len(a.tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1", len(a.tasks))
+	}
+	created := a.tasks[0].task
+	if created.Description != "Public endpoint" || created.Status != models.StatusDoing || created.Priority != models.PriorityHigh || created.EstimatedHours != 3.5 || created.JiraIssue != "QIX-42" {
+		t.Fatalf("created task fields = %#v", created)
+	}
+
+	a.startTaskEditForm()
+	a.form.fields[0].value = []rune("Build stable API")
+	a.form.fields[2].value = []rune("done")
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("edit task submitForm() error: %v", err)
+	}
+	updated, _, err := store.FindTask("launch", created.ID)
+	if err != nil {
+		t.Fatalf("FindTask() error: %v", err)
+	}
+	if updated.Title != "Build stable API" || updated.Status != models.StatusDone {
+		t.Fatalf("updated task = %#v", updated)
+	}
+}
+
+func TestFormsRenderAsCenteredModal(t *testing.T) {
+	a := &app{width: 100, height: 30}
+	a.form = &inputForm{kind: "project", title: "Create project", fields: []inputField{{label: "Name", value: []rune("launch")}}}
+
+	view := a.View()
+	if !strings.Contains(view, "Create project") || !strings.Contains(view, "launch") {
+		t.Fatalf("modal content missing:\n%s", view)
+	}
+	lines := strings.Split(view, "\n")
+	firstContent := -1
+	for i, line := range lines {
+		if strings.Contains(stripANSI(line), "Create project") {
+			firstContent = i
+			break
+		}
+	}
+	if firstContent < 5 || firstContent > 15 {
+		t.Fatalf("modal title line = %d, want vertically centered", firstContent)
+	}
+}
+
+func TestRecurrenceParsing(t *testing.T) {
+	now := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC) // Monday
+	recurrence, err := parseRecurrence("weekly:friday", now)
+	if err != nil {
+		t.Fatalf("parseRecurrence() error: %v", err)
+	}
+	if recurrence.Type != models.RecurWeekly || recurrence.NextDue != "2026-10-02" {
+		t.Fatalf("recurrence = %#v", recurrence)
+	}
+	if _, err := parseRecurrence("monthly:40", now); err == nil {
+		t.Fatal("invalid monthly recurrence accepted")
+	}
+}

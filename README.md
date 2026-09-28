@@ -9,8 +9,8 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 
 ## Highlights
 
-- Full-screen project and task browser with keyboard navigation
-- Inline project and task creation
+- Full-screen [Bubble Tea](https://github.com/charmbracelet/bubbletea) interface with keyboard navigation
+- Centered modal forms for creating, editing, and confirming changes
 - Fast task-status workflow: `todo`, `doing`, `done`, and `blocked`
 - Hierarchical projects with modules and project-level tasks
 - Priorities, tags, dependencies, parent/child links, recurrence, and Jira links
@@ -40,7 +40,6 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 
 - Go 1.21 or newer to build from source
 - A terminal with ANSI escape-sequence support
-- A POSIX environment with `stty` (Linux, macOS, BSD, or Windows through WSL)
 - Minimum recommended terminal size: 72 columns by 22 rows
 
 ## Installation
@@ -87,24 +86,53 @@ qix tui --project launch
 
 ### Keyboard controls
 
+The top navigation exposes five screens. Use uppercase `W`, `T`, `S`, `R`, and `H` from anywhere outside a modal.
+
+| Key | Screen |
+| --- | --- |
+| `W` | Project, module, and task workspace |
+| `T` | Active timer and today's time summary |
+| `S` | Sprint planning and progress |
+| `R` | Overview, daily, WBS, timeline, and comparison reports |
+| `H` | Doctor checks and backup management |
+
+Workspace controls:
+
 | Key | Action |
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Move through the focused list |
 | `Tab`, `←` / `→` | Change the focused pane |
-| `n` | Create a task in the selected project |
+| `n` | Create a task in the selected project or module |
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |
-| `e` | Edit the selected module's name and description |
-| `d` | Delete the focused project or module after name confirmation |
+| `e` | Edit the focused project, module, or task |
+| `d` | Delete the focused project, module, or task after typed confirmation |
 | `Space` or `x` | Cycle the selected task's status |
 | `1` / `2` / `3` / `4` | Set `todo` / `doing` / `done` / `blocked` |
+| `l` | Link the selected task to a parent task |
+| `y` | Add a dependency to the selected task |
+| `c` / `u` | Set or remove recurrence |
+| `C` | Complete a task and advance its recurring due date |
+| `t` | Log time manually |
+| `o` | Open the selected task's Jira issue |
 | `r` | Reload projects and tasks from disk |
 | `?` | Toggle help |
 | `q` or `Ctrl-C` | Quit |
-| `Enter` | Submit inline input |
-| `Ctrl-G` | Cancel inline input |
+| `Enter` | Advance or submit a modal form |
+| `Esc` or `Ctrl-G` | Cancel a modal form |
 
-With the project pane focused, the details panel shows the selected project's description, tags, modules, sprints, status counts, estimated and actual hours, and completion percentage. The module pane contains a `(project tasks)` scope plus every module in the project. Selecting a scope filters the task pane; new tasks are created in that selected scope. Module details include tags, task counts, estimated and actual hours, and completion.
+Task create/edit modals cover title, description, status, priority, estimated hours, tags, and Jira issue. The task detail pane also displays time totals, parent/dependency relationships, recurrence, and Jira linkage.
+
+Screen-specific controls:
+
+| Screen | Controls |
+| --- | --- |
+| Tracking | `s` start/switch to the Workspace-selected task, `x` stop, `t` manually log time |
+| Sprints | `↑`/`↓` select, `n` create, `a` assign selected task, `u` unassign, `d` remove |
+| Reports | `←`/`→` cycle overview, daily, WBS, timeline, and project comparison |
+| Health | `↑`/`↓` select backup, `b` create, `e` export, `o` restore, `c` clean expired backups, `r` refresh checks |
+
+The TUI is built with Bubble Tea `v1.2.4` and Lip Gloss `v1.0.0`, versions selected to retain the repository's Go 1.21 compatibility.
 
 ## CLI
 
