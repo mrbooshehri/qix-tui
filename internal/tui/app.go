@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mrbooshehri/qix-go/internal/models"
 	"github.com/mrbooshehri/qix-go/internal/storage"
 )
@@ -28,6 +29,7 @@ const (
 type keyEvent struct {
 	name string
 	r    rune
+	text []rune
 }
 
 type taskItem struct {
@@ -56,25 +58,27 @@ type confirmation struct {
 }
 
 type app struct {
-	store        *storage.Storage
-	projects     []string
-	projectIndex int
-	project      *models.Project
-	moduleIndex  int
-	tasks        []taskItem
-	taskIndex    int
-	focus        int
-	form         *inputForm
-	confirmation *confirmation
-	message      string
-	isError      bool
-	showHelp     bool
-	width        int
-	height       int
-	section      int
-	sprintIndex  int
-	reportIndex  int
-	backupIndex  int
+	store         *storage.Storage
+	projects      []string
+	projectIndex  int
+	project       *models.Project
+	moduleIndex   int
+	tasks         []taskItem
+	taskIndex     int
+	focus         int
+	form          *inputForm
+	confirmation  *confirmation
+	message       string
+	isError       bool
+	showHelp      bool
+	width         int
+	height        int
+	section       int
+	sprintIndex   int
+	reportIndex   int
+	backupIndex   int
+	detailScroll  int
+	sectionScroll int
 }
 
 type tickMsg time.Time
@@ -93,7 +97,7 @@ func Run(store *storage.Storage, initialProject string) error {
 	if err := a.loadProjects(initialProject); err != nil {
 		return err
 	}
-	_, err := tea.NewProgram(a, tea.WithAltScreen()).Run()
+	_, err := tea.NewProgram(a, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -109,6 +113,33 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tickCmd()
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
+		return a, nil
+	case tea.MouseMsg:
+		if msg.Action != tea.MouseActionPress || (msg.Button != tea.MouseButtonWheelUp && msg.Button != tea.MouseButtonWheelDown) {
+			return a, nil
+		}
+		if a.form == nil && a.confirmation == nil && a.section == sectionWorkspace {
+			a.focus = a.focusAt(msg.X, msg.Y)
+		}
+		delta := 3
+		if msg.Button == tea.MouseButtonWheelUp {
+			delta = -3
+		}
+		key := keyEvent{name: "down"}
+		if delta < 0 {
+			key.name = "up"
+		}
+		steps := delta
+		if steps < 0 {
+			steps = -steps
+		}
+		for i := 0; i < max(1, steps); i++ {
+			_, err := a.updateKey(key)
+			if err != nil {
+				a.message, a.isError = err.Error(), true
+				break
+			}
+		}
 		return a, nil
 	case tea.KeyMsg:
 		key := bubbleKey(msg)
@@ -131,10 +162,14 @@ func bubbleKey(msg tea.KeyMsg) keyEvent {
 		return keyEvent{name: "ctrl-c"}
 	case tea.KeyCtrlG:
 		return keyEvent{name: "cancel"}
+	case tea.KeyCtrlS:
+		return keyEvent{name: "save"}
 	case tea.KeyEsc:
 		return keyEvent{name: "esc"}
 	case tea.KeyTab:
 		return keyEvent{name: "tab"}
+	case tea.KeyShiftTab:
+		return keyEvent{name: "shift-tab"}
 	case tea.KeyEnter:
 		return keyEvent{name: "enter"}
 	case tea.KeyBackspace, tea.KeyDelete:
@@ -147,14 +182,39 @@ func bubbleKey(msg tea.KeyMsg) keyEvent {
 		return keyEvent{name: "left"}
 	case tea.KeyRight:
 		return keyEvent{name: "right"}
+	case tea.KeyPgUp:
+		return keyEvent{name: "page-up"}
+	case tea.KeyPgDown:
+		return keyEvent{name: "page-down"}
+	case tea.KeyHome:
+		return keyEvent{name: "home"}
+	case tea.KeyEnd:
+		return keyEvent{name: "end"}
 	case tea.KeySpace:
 		return keyEvent{name: "space", r: ' '}
 	case tea.KeyRunes:
 		if len(msg.Runes) > 0 {
-			return keyEvent{r: msg.Runes[0]}
+			return keyEvent{r: msg.Runes[0], text: msg.Runes}
 		}
 	}
 	return keyEvent{}
+}
+
+func (a *app) focusAt(x, y int) int {
+	contentHeight := max(1, a.height-4)
+	projectWidth := clamp(a.width/4, 24, 34)
+	projectHeight := max(7, contentHeight/2)
+	taskHeight := max(9, contentHeight*3/5)
+	if x < projectWidth {
+		if y < 2+projectHeight {
+			return 0
+		}
+		return 1
+	}
+	if y < 2+taskHeight {
+		return 2
+	}
+	return 3
 }
 
 func (a *app) loadProjects(selectName string) error {
@@ -231,18 +291,23 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	switch key.r {
 	case 'W':
 		a.section = sectionWorkspace
+		a.sectionScroll = 0
 		return false, nil
 	case 'T':
 		a.section = sectionTracking
+		a.sectionScroll = 0
 		return false, nil
 	case 'S':
 		a.section = sectionSprints
+		a.sectionScroll = 0
 		return false, nil
 	case 'R':
 		a.section = sectionReports
+		a.sectionScroll = 0
 		return false, nil
 	case 'H':
 		a.section = sectionHealth
+		a.sectionScroll = 0
 		return false, nil
 	}
 	if key.name == "esc" && a.showHelp {
@@ -263,17 +328,26 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	a.message, a.isError = "", false
 	switch {
 	case key.name == "tab":
-		a.focus = (a.focus + 1) % 3
+		a.focus = (a.focus + 1) % 4
+		a.detailScroll = 0
 	case key.name == "left":
 		a.focus = max(0, a.focus-1)
 	case key.name == "right":
-		a.focus = min(2, a.focus+1)
-	case key.name == "enter" && a.focus < 2:
+		a.focus = min(3, a.focus+1)
+	case key.name == "enter" && a.focus < 3:
 		a.focus++
 	case key.name == "up" || key.r == 'k':
 		return false, a.move(-1)
 	case key.name == "down" || key.r == 'j':
 		return false, a.move(1)
+	case key.name == "page-up":
+		return false, a.move(-a.pageSize())
+	case key.name == "page-down":
+		return false, a.move(a.pageSize())
+	case key.name == "home":
+		return false, a.moveToBoundary(false)
+	case key.name == "end":
+		return false, a.moveToBoundary(true)
 	case key.r == 'r':
 		name := ""
 		if len(a.projects) > 0 {
@@ -380,6 +454,7 @@ func (a *app) startProjectEditForm() {
 		kind:  "edit-project",
 		title: "Edit project " + a.project.Name,
 		fields: []inputField{
+			{label: "Name", value: []rune(a.project.Name), required: true},
 			{label: "Description", value: []rune(a.project.Description)},
 			{label: "Tags (comma-separated)", value: []rune(strings.Join(a.project.Tags, ", "))},
 		},
@@ -406,6 +481,7 @@ func (a *app) startModuleEditForm() {
 		fields: []inputField{
 			{label: "Name", value: []rune(module.Name), required: true},
 			{label: "Description", value: []rune(module.Description)},
+			{label: "Tags (comma-separated)", value: []rune(strings.Join(module.Tags, ", "))},
 		},
 	}
 }
@@ -527,6 +603,10 @@ func (a *app) updateForm(key keyEvent) error {
 	switch key.name {
 	case "esc", "cancel":
 		a.form = nil
+	case "tab", "down":
+		a.form.index = min(len(a.form.fields)-1, a.form.index+1)
+	case "shift-tab", "up":
+		a.form.index = max(0, a.form.index-1)
 	case "backspace":
 		if len(field.value) > 0 {
 			field.value = field.value[:len(field.value)-1]
@@ -540,8 +620,17 @@ func (a *app) updateForm(key keyEvent) error {
 			return nil
 		}
 		return a.submitForm()
+	case "save":
+		for _, candidate := range a.form.fields {
+			if candidate.required && strings.TrimSpace(string(candidate.value)) == "" {
+				return fmt.Errorf("%s cannot be empty", strings.ToLower(candidate.label))
+			}
+		}
+		return a.submitForm()
 	default:
-		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
+		if len(key.text) > 0 {
+			field.value = append(field.value, key.text...)
+		} else if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
 			field.value = append(field.value, key.r)
 		}
 	}
@@ -566,10 +655,16 @@ func (a *app) submitForm() error {
 		return nil
 	}
 	if form.kind == "edit-project" {
-		name := a.project.Name
-		description := strings.TrimSpace(string(form.fields[0].value))
-		tags := splitCommaSeparated(string(form.fields[1].value))
-		if err := a.store.UpdateProject(name, func(project *models.Project) error {
+		oldName := a.project.Name
+		newName := strings.TrimSpace(string(form.fields[0].value))
+		description := strings.TrimSpace(string(form.fields[1].value))
+		tags := splitCommaSeparated(string(form.fields[2].value))
+		if newName != oldName {
+			if err := a.store.RenameProject(oldName, newName); err != nil {
+				return err
+			}
+		}
+		if err := a.store.UpdateProject(newName, func(project *models.Project) error {
 			project.Description = description
 			project.Tags = tags
 			return nil
@@ -577,10 +672,10 @@ func (a *app) submitForm() error {
 			return err
 		}
 		a.form = nil
-		if err := a.loadProject(); err != nil {
+		if err := a.loadProjects(newName); err != nil {
 			return err
 		}
-		a.message = "Updated project " + name
+		a.message = "Updated project " + newName
 		return nil
 	}
 	if form.kind == "module" {
@@ -604,9 +699,18 @@ func (a *app) submitForm() error {
 		oldName := a.project.Modules[a.moduleIndex].Name
 		newName := strings.TrimSpace(string(form.fields[0].value))
 		description := strings.TrimSpace(string(form.fields[1].value))
+		tags := splitCommaSeparated(string(form.fields[2].value))
+		if newName != oldName {
+			for _, module := range a.project.Modules {
+				if module.Name == newName {
+					return fmt.Errorf("module '%s' already exists", newName)
+				}
+			}
+		}
 		if err := a.store.UpdateModule(a.project.Name, oldName, func(module *models.Module) error {
 			module.Name = newName
 			module.Description = description
+			module.Tags = tags
 			return nil
 		}); err != nil {
 			return err
@@ -622,7 +726,7 @@ func (a *app) submitForm() error {
 		}
 		return nil
 	}
-	if form.kind == "sprint" {
+	if form.kind == "sprint" || form.kind == "edit-sprint" {
 		name := strings.TrimSpace(string(form.fields[0].value))
 		startDate := strings.TrimSpace(string(form.fields[1].value))
 		endDate := strings.TrimSpace(string(form.fields[2].value))
@@ -637,15 +741,41 @@ func (a *app) submitForm() error {
 		if end.Before(start) {
 			return fmt.Errorf("end date must not be before start date")
 		}
-		if err := a.store.AddSprint(a.project.Name, models.Sprint{Name: name, StartDate: startDate, EndDate: endDate}); err != nil {
-			return err
+		if form.kind == "sprint" {
+			if err := a.store.AddSprint(a.project.Name, models.Sprint{Name: name, StartDate: startDate, EndDate: endDate}); err != nil {
+				return err
+			}
+		} else {
+			oldName := a.project.Sprints[a.sprintIndex].Name
+			if err := a.store.UpdateProject(a.project.Name, func(project *models.Project) error {
+				for _, candidate := range project.Sprints {
+					if candidate.Name == name && candidate.Name != oldName {
+						return fmt.Errorf("sprint '%s' already exists", name)
+					}
+				}
+				for i := range project.Sprints {
+					if project.Sprints[i].Name == oldName {
+						project.Sprints[i].Name = name
+						project.Sprints[i].StartDate = startDate
+						project.Sprints[i].EndDate = endDate
+						return nil
+					}
+				}
+				return fmt.Errorf("sprint '%s' not found", oldName)
+			}); err != nil {
+				return err
+			}
 		}
 		a.form = nil
 		if err := a.loadProject(); err != nil {
 			return err
 		}
-		a.sprintIndex = len(a.project.Sprints) - 1
-		a.message = "Created sprint " + name
+		if form.kind == "sprint" {
+			a.sprintIndex = len(a.project.Sprints) - 1
+			a.message = "Created sprint " + name
+		} else {
+			a.message = "Updated sprint " + name
+		}
 		return nil
 	}
 	if form.kind == "backup-export" {
@@ -873,7 +1003,9 @@ func (a *app) updateConfirmation(key keyEvent) error {
 			a.message = "Restored " + confirm.expected + " (safety backup: " + safety + ")"
 		}
 	default:
-		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
+		if len(key.text) > 0 {
+			confirm.input = append(confirm.input, key.text...)
+		} else if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
 			confirm.input = append(confirm.input, key.r)
 		}
 	}
@@ -888,6 +1020,7 @@ func (a *app) move(delta int) error {
 		a.projectIndex = clamp(a.projectIndex+delta, 0, len(a.projects)-1)
 		a.moduleIndex = -1
 		a.taskIndex = 0
+		a.detailScroll = 0
 		return a.loadProject()
 	}
 	if a.focus == 1 {
@@ -896,12 +1029,70 @@ func (a *app) move(delta int) error {
 		}
 		a.moduleIndex = clamp(a.moduleIndex+delta, -1, len(a.project.Modules)-1)
 		a.taskIndex = 0
+		a.detailScroll = 0
 		return a.loadTasks()
 	}
 	if a.focus == 2 && len(a.tasks) > 0 {
 		a.taskIndex = clamp(a.taskIndex+delta, 0, len(a.tasks)-1)
+		a.detailScroll = 0
+	}
+	if a.focus == 3 {
+		visible := max(1, a.detailPaneHeight()-2)
+		a.detailScroll = clamp(a.detailScroll+delta, 0, max(0, len(a.detailLines())-visible))
 	}
 	return nil
+}
+
+func (a *app) moveToBoundary(end bool) error {
+	if a.focus == 0 && len(a.projects) > 0 {
+		a.projectIndex = 0
+		if end {
+			a.projectIndex = len(a.projects) - 1
+		}
+		a.moduleIndex, a.taskIndex, a.detailScroll = -1, 0, 0
+		return a.loadProject()
+	}
+	if a.focus == 1 && a.project != nil {
+		a.moduleIndex = -1
+		if end && len(a.project.Modules) > 0 {
+			a.moduleIndex = len(a.project.Modules) - 1
+		}
+		a.taskIndex, a.detailScroll = 0, 0
+		return a.loadTasks()
+	}
+	if a.focus == 2 && len(a.tasks) > 0 {
+		a.taskIndex = 0
+		if end {
+			a.taskIndex = len(a.tasks) - 1
+		}
+		a.detailScroll = 0
+	}
+	if a.focus == 3 {
+		a.detailScroll = 0
+		if end {
+			a.detailScroll = max(0, len(a.detailLines())-(a.detailPaneHeight()-2))
+		}
+	}
+	return nil
+}
+
+func (a *app) pageSize() int {
+	contentHeight := max(1, a.height-4)
+	switch a.focus {
+	case 0:
+		return max(1, max(7, contentHeight/2)-3)
+	case 1:
+		return max(1, contentHeight-max(7, contentHeight/2)-3)
+	case 2:
+		return max(1, max(9, contentHeight*3/5)-3)
+	default:
+		return max(1, a.detailPaneHeight()-3)
+	}
+}
+
+func (a *app) detailPaneHeight() int {
+	contentHeight := max(1, a.height-4)
+	return contentHeight - max(9, contentHeight*3/5)
 }
 
 func (a *app) cycleStatus() error {
@@ -954,65 +1145,67 @@ func (a *app) view(width, height int) string {
 	projectLines := make([]string, 0, len(a.projects)+1)
 	if len(a.projects) == 0 {
 		projectLines = append(projectLines, "  No projects", "", "  Press p to create one")
-	}
-	for i, name := range a.projects {
-		prefix := "  "
-		if i == a.projectIndex {
-			prefix = "> "
+	} else {
+		start, end := visibleRange(len(a.projects), a.projectIndex, projectHeight-2)
+		for i := start; i < end; i++ {
+			projectLines = append(projectLines, tableRow("  "+a.projects[i], projectWidth-2, i, i == a.projectIndex, ""))
 		}
-		projectLines = append(projectLines, prefix+name)
-	}
-	if len(a.projects) > 0 {
-		projectLines = visibleWindow(projectLines, a.projectIndex, projectHeight-2)
 	}
 
 	moduleLines := make([]string, 0, 1)
 	if a.project == nil {
 		moduleLines = append(moduleLines, "  Select a project")
 	} else {
-		rootPrefix := "  "
-		if a.moduleIndex < 0 {
-			rootPrefix = "> "
-		}
-		moduleLines = append(moduleLines, rootPrefix+"(project tasks)")
-		for i, module := range a.project.Modules {
-			prefix := "  "
-			if i == a.moduleIndex {
-				prefix = "> "
+		count := len(a.project.Modules) + 1
+		selected := a.moduleIndex + 1
+		start, end := visibleRange(count, selected, moduleHeight-2)
+		for row := start; row < end; row++ {
+			text := "  (project tasks)"
+			if row > 0 {
+				module := a.project.Modules[row-1]
+				text = fmt.Sprintf("  %s (%d)", module.Name, len(module.Tasks))
 			}
-			moduleLines = append(moduleLines, fmt.Sprintf("%s%s (%d)", prefix, module.Name, len(module.Tasks)))
+			moduleLines = append(moduleLines, tableRow(text, projectWidth-2, row, row == selected, ""))
 		}
 		if len(a.project.Modules) == 0 {
 			moduleLines = append(moduleLines, "", "  Press m to create one")
 		}
-		moduleLines = visibleWindow(moduleLines, a.moduleIndex+1, moduleHeight-2)
 	}
 
 	taskLines := make([]string, 0, len(a.tasks)+1)
 	if a.project != nil && len(a.tasks) == 0 {
 		taskLines = append(taskLines, "  No tasks", "", "  Press n to create one")
 	}
-	for i, item := range a.tasks {
-		prefix := "  "
-		if i == a.taskIndex {
-			prefix = "> "
-		}
-		taskLines = append(taskLines, fmt.Sprintf("%s%-7s %-8s %s", prefix, item.task.Status, item.task.ID, item.task.Title))
-	}
 	if len(a.tasks) > 0 {
-		taskLines = visibleWindow(taskLines, a.taskIndex, taskHeight-2)
+		header := fmt.Sprintf("  %-7s %-8s %s", "STATUS", "ID", "TITLE")
+		taskLines = append(taskLines, tableHeader(header, mainWidth-2))
+		start, end := visibleRange(len(a.tasks), a.taskIndex, taskHeight-3)
+		for i := start; i < end; i++ {
+			item := a.tasks[i]
+			content := fmt.Sprintf("  %-7s %-8s %s", item.task.Status, item.task.ID, item.task.Title)
+			taskLines = append(taskLines, tableRow(content, mainWidth-2, i, i == a.taskIndex, statusColor(item.task.Status)))
+		}
 	}
 
-	details := a.detailLines()
-	projectBox := box("Projects", projectLines, projectWidth, projectHeight, a.focus == 0)
-	moduleBox := box("Modules", moduleLines, projectWidth, moduleHeight, a.focus == 1)
+	allDetails := a.detailLines()
+	details := scrollWindow(allDetails, a.detailScroll, detailHeight-2)
+	projectTitle := scrollTitle("Projects", a.projectIndex, len(a.projects))
+	moduleCount := 0
+	if a.project != nil {
+		moduleCount = len(a.project.Modules) + 1
+	}
+	moduleTitle := scrollTitle("Modules", a.moduleIndex+1, moduleCount)
+	projectBox := box(projectTitle, projectLines, projectWidth, projectHeight, a.focus == 0)
+	moduleBox := box(moduleTitle, moduleLines, projectWidth, moduleHeight, a.focus == 1)
 	left := append(projectBox, moduleBox...)
 	taskTitle := "Project Tasks"
 	if a.project != nil && a.moduleIndex >= 0 {
 		taskTitle = "Tasks • " + a.project.Modules[a.moduleIndex].Name
 	}
+	taskTitle = scrollTitle(taskTitle, a.taskIndex, len(a.tasks))
+	detailTitle := scrollOffsetTitle("Details", a.detailScroll, len(allDetails), detailHeight-2)
 	topRight := box(taskTitle, taskLines, mainWidth, taskHeight, a.focus == 2)
-	bottomRight := box("Details", details, mainWidth, detailHeight, false)
+	bottomRight := box(detailTitle, details, mainWidth, detailHeight, a.focus == 3)
 	right := append(topRight, bottomRight...)
 
 	var b strings.Builder
@@ -1026,7 +1219,7 @@ func (a *app) view(width, height int) string {
 	for i := 0; i < contentHeight; i++ {
 		b.WriteString(left[i] + " " + right[i] + "\n")
 	}
-	b.WriteString(dim + fit(" ↑/↓ move  tab focus  p project  m module  e edit  d remove  n task  space status  ? help  q quit", width) + reset + "\n")
+	b.WriteString(dim + fit(" ↑/↓ scroll  pgup/pgdn page  home/end jump  tab focus  p/m/n add  e edit  d remove  ? help", width) + reset + "\n")
 	footer := a.message
 	color := green
 	if a.isError {
@@ -1035,24 +1228,45 @@ func (a *app) view(width, height int) string {
 	b.WriteString(color + fit(" "+footer, width) + reset)
 	base := b.String()
 	if a.form != nil || a.confirmation != nil {
-		return a.modalView(width, height)
+		return a.modalView(base, width, height)
 	}
 	return base
 }
 
-func (a *app) modalView(width, height int) string {
-	modalWidth := clamp(width-12, 48, 72)
-	var title, prompt, value, hint string
+func (a *app) modalView(base string, width, height int) string {
+	modalWidth := clamp(width-18, 46, 72)
+	var title, content, hint string
 	if a.form != nil {
-		field := a.form.fields[a.form.index]
 		title = a.form.title
-		prompt = fmt.Sprintf("%s  ·  field %d of %d", field.label, a.form.index+1, len(a.form.fields))
-		value = string(field.value) + "█"
-		hint = "enter next/save  •  esc or ctrl-g cancel"
+		visibleFields := clamp((height-10)/2, 1, len(a.form.fields))
+		start, end := visibleRange(len(a.form.fields), a.form.index, visibleFields)
+		rows := make([]string, 0, visibleFields*2+1)
+		for i := start; i < end; i++ {
+			field := a.form.fields[i]
+			label := field.label
+			if field.required {
+				label += " *"
+			}
+			labelStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+			inputStyle := lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).Background(lipgloss.Color("238")).Foreground(lipgloss.Color("252"))
+			value := string(field.value)
+			if i == a.form.index {
+				labelStyle = labelStyle.Bold(true).Foreground(lipgloss.Color("44"))
+				inputStyle = inputStyle.Background(lipgloss.Color("236")).Foreground(lipgloss.Color("229"))
+				value += "█"
+			}
+			rows = append(rows, labelStyle.Render(label), inputStyle.Render(value))
+		}
+		if len(a.form.fields) > visibleFields {
+			rows = append(rows, lipgloss.NewStyle().Faint(true).Render(fmt.Sprintf("Fields %d–%d of %d", start+1, end, len(a.form.fields))))
+		}
+		content = strings.Join(rows, "\n")
+		hint = "↑/↓ or tab select  •  enter next/save  •  ctrl-s save  •  esc cancel"
 	} else {
 		title = "Confirm destructive action"
-		prompt = a.confirmation.prompt
-		value = string(a.confirmation.input) + "█"
+		content = a.confirmation.prompt + "\n" +
+			lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).MarginTop(1).
+				Background(lipgloss.Color("238")).Foreground(lipgloss.Color("229")).Render(string(a.confirmation.input)+"█")
 		hint = "type the exact value, then enter  •  esc cancels"
 	}
 	if a.isError && a.message != "" {
@@ -1067,15 +1281,10 @@ func (a *app) modalView(width, height int) string {
 		Foreground(lipgloss.Color("252")).
 		Render(
 			lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("44")).Render(title) + "\n\n" +
-				prompt + "\n" +
-				lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).MarginTop(1).MarginBottom(1).
-					Background(lipgloss.Color("238")).Foreground(lipgloss.Color("229")).Render(value) + "\n" +
+				content + "\n\n" +
 				lipgloss.NewStyle().Faint(true).Render(hint),
 		)
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, card,
-		lipgloss.WithWhitespaceChars("·"),
-		lipgloss.WithWhitespaceForeground(lipgloss.Color("237")),
-	)
+	return overlayView(base, card, width, height)
 }
 
 func (a *app) detailLines() []string {
@@ -1227,21 +1436,128 @@ func box(title string, body []string, width, height int, active bool) []string {
 	return lines
 }
 
+func tableHeader(content string, width int) string {
+	return lipgloss.NewStyle().
+		Width(width).
+		MaxWidth(width).
+		Bold(true).
+		Foreground(lipgloss.Color("252")).
+		Background(lipgloss.Color("239")).
+		Render(ansi.Truncate(content, width, "…"))
+}
+
+func tableRow(content string, width, row int, selected bool, foreground string) string {
+	background := lipgloss.Color("235")
+	if row%2 == 1 {
+		background = lipgloss.Color("236")
+	}
+	style := lipgloss.NewStyle().Width(width).MaxWidth(width).Background(background).Foreground(lipgloss.Color("252"))
+	if foreground != "" {
+		style = style.Foreground(lipgloss.Color(foreground))
+	}
+	if selected {
+		if strings.HasPrefix(content, "  ") {
+			content = "› " + strings.TrimPrefix(content, "  ")
+		}
+		style = style.Bold(true).Background(lipgloss.Color("24")).Foreground(lipgloss.Color("231"))
+	}
+	return style.Render(ansi.Truncate(content, width, "…"))
+}
+
+func statusColor(status models.TaskStatus) string {
+	switch status {
+	case models.StatusDoing:
+		return "220"
+	case models.StatusDone:
+		return "42"
+	case models.StatusBlocked:
+		return "203"
+	default:
+		return "250"
+	}
+}
+
+func visibleRange(total, selected, height int) (int, int) {
+	if total <= 0 || height <= 0 {
+		return 0, 0
+	}
+	height = min(height, total)
+	selected = clamp(selected, 0, total-1)
+	start := selected - height/2
+	if start < 0 {
+		start = 0
+	}
+	if start+height > total {
+		start = total - height
+	}
+	return start, start + height
+}
+
+func scrollWindow(lines []string, offset, height int) []string {
+	if height <= 0 || len(lines) == 0 {
+		return nil
+	}
+	offset = clamp(offset, 0, max(0, len(lines)-height))
+	end := min(len(lines), offset+height)
+	return lines[offset:end]
+}
+
+func scrollTitle(title string, selected, total int) string {
+	if total <= 0 {
+		return title
+	}
+	return fmt.Sprintf("%s  %d/%d", title, clamp(selected+1, 1, total), total)
+}
+
+func scrollOffsetTitle(title string, offset, total, height int) string {
+	if total <= height || total == 0 {
+		return title
+	}
+	return fmt.Sprintf("%s  lines %d–%d/%d", title, offset+1, min(total, offset+height), total)
+}
+
+func overlayView(base, overlay string, width, height int) string {
+	baseLines := strings.Split(base, "\n")
+	for len(baseLines) < height {
+		baseLines = append(baseLines, "")
+	}
+	overlayLines := strings.Split(overlay, "\n")
+	overlayWidth := 0
+	for _, line := range overlayLines {
+		overlayWidth = max(overlayWidth, ansi.StringWidth(line))
+	}
+	x := max(0, (width-overlayWidth)/2)
+	y := max(0, (height-len(overlayLines))/2)
+	dimmed := lipgloss.NewStyle().Faint(true).Foreground(lipgloss.Color("243"))
+	for row := 0; row < height && row < len(baseLines); row++ {
+		plain := []rune(fit(stripANSI(baseLines[row]), width))
+		if row < y || row >= y+len(overlayLines) {
+			baseLines[row] = dimmed.Render(string(plain))
+			continue
+		}
+		modalLine := overlayLines[row-y]
+		lineWidth := ansi.StringWidth(modalLine)
+		left := min(x, len(plain))
+		right := min(len(plain), x+lineWidth)
+		baseLines[row] = dimmed.Render(string(plain[:left])) + modalLine + dimmed.Render(string(plain[right:]))
+	}
+	return strings.Join(baseLines[:height], "\n")
+}
+
 func fit(s string, width int) string {
 	if width <= 0 {
 		return ""
 	}
 	// ANSI sequences are only used in the details title. Preserve them while
 	// padding based on visible content; truncation strips styling safely.
-	plain := stripANSI(s)
-	if runeCount(plain) > width {
-		runes := []rune(plain)
+	visibleWidth := ansi.StringWidth(s)
+	if visibleWidth > width {
 		if width == 1 {
-			return string(runes[:1])
+			return ansi.Truncate(s, 1, "")
 		}
-		return string(runes[:width-1]) + "…"
+		return ansi.Truncate(s, width, "…")
 	}
-	return s + strings.Repeat(" ", width-runeCount(plain))
+	return s + strings.Repeat(" ", width-visibleWidth)
 }
 
 func stripANSI(s string) string {
@@ -1341,20 +1657,6 @@ func progressBar(percent float64, width int) string {
 	percent = float64(clamp(int(percent+0.5), 0, 100))
 	filled := int(percent / 100 * float64(width))
 	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
-}
-
-func visibleWindow(lines []string, selected, height int) []string {
-	if height <= 0 || len(lines) <= height {
-		return lines
-	}
-	start := selected - height/2
-	if start < 0 {
-		start = 0
-	}
-	if start+height > len(lines) {
-		start = len(lines) - height
-	}
-	return lines[start : start+height]
 }
 
 func clamp(value, low, high int) int {

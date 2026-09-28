@@ -54,17 +54,42 @@ func (a *app) navigation(width int, active string) string {
 }
 
 func (a *app) updateSection(key keyEvent) error {
+	visible := max(1, a.height-5)
+	if key.name == "page-up" {
+		a.sectionScroll = max(0, a.sectionScroll-visible)
+		return nil
+	}
+	if key.name == "page-down" {
+		a.sectionScroll += visible
+		return nil
+	}
+	if key.name == "home" {
+		a.sectionScroll = 0
+		return nil
+	}
+	if key.name == "end" {
+		a.sectionScroll = 1 << 20
+		return nil
+	}
 	switch a.section {
 	case sectionTracking:
 		return a.updateTracking(key)
 	case sectionSprints:
 		return a.updateSprints(key)
 	case sectionReports:
+		if key.name == "up" || key.r == 'k' {
+			a.sectionScroll = max(0, a.sectionScroll-1)
+		}
+		if key.name == "down" || key.r == 'j' {
+			a.sectionScroll++
+		}
 		if key.name == "left" || key.r == 'h' {
 			a.reportIndex = max(0, a.reportIndex-1)
+			a.sectionScroll = 0
 		}
 		if key.name == "right" || key.r == 'l' {
 			a.reportIndex = min(4, a.reportIndex+1)
+			a.sectionScroll = 0
 		}
 	case sectionHealth:
 		backups, err := a.store.ListBackups()
@@ -73,9 +98,11 @@ func (a *app) updateSection(key keyEvent) error {
 		}
 		if key.name == "up" || key.r == 'k' {
 			a.backupIndex = max(0, a.backupIndex-1)
+			a.sectionScroll = max(0, a.sectionScroll-1)
 		}
 		if key.name == "down" || key.r == 'j' {
 			a.backupIndex = min(max(0, len(backups)-1), a.backupIndex+1)
+			a.sectionScroll++
 		}
 		if key.r == 'r' {
 			a.message = "Health checks refreshed"
@@ -109,6 +136,12 @@ func (a *app) updateSection(key keyEvent) error {
 }
 
 func (a *app) updateTracking(key keyEvent) error {
+	if key.name == "up" || key.r == 'k' {
+		a.sectionScroll = max(0, a.sectionScroll-1)
+	}
+	if key.name == "down" || key.r == 'j' {
+		a.sectionScroll++
+	}
 	if key.r == 'x' {
 		elapsed, path, taskID, err := a.store.StopTracking()
 		if err != nil {
@@ -156,9 +189,11 @@ func (a *app) updateSprints(key keyEvent) error {
 	sprints := a.project.Sprints
 	if key.name == "up" || key.r == 'k' {
 		a.sprintIndex = max(0, a.sprintIndex-1)
+		a.sectionScroll = max(0, a.sectionScroll-1)
 	}
 	if key.name == "down" || key.r == 'j' {
 		a.sprintIndex = min(max(0, len(sprints)-1), a.sprintIndex+1)
+		a.sectionScroll++
 	}
 	if key.r == 'n' {
 		today := time.Now()
@@ -166,6 +201,14 @@ func (a *app) updateSprints(key keyEvent) error {
 			{label: "Name", required: true},
 			{label: "Start date (YYYY-MM-DD)", value: []rune(today.Format("2006-01-02")), required: true},
 			{label: "End date (YYYY-MM-DD)", value: []rune(today.AddDate(0, 0, 13).Format("2006-01-02")), required: true},
+		}}
+	}
+	if key.r == 'e' && len(sprints) > 0 {
+		sprint := sprints[a.sprintIndex]
+		a.form = &inputForm{kind: "edit-sprint", title: "Edit sprint " + sprint.Name, fields: []inputField{
+			{label: "Name", value: []rune(sprint.Name), required: true},
+			{label: "Start date (YYYY-MM-DD)", value: []rune(sprint.StartDate), required: true},
+			{label: "End date (YYYY-MM-DD)", value: []rune(sprint.EndDate), required: true},
 		}}
 	}
 	if (key.r == 'a' || key.r == 'u') && (len(sprints) == 0 || len(a.tasks) == 0) {
@@ -219,13 +262,16 @@ func (a *app) sectionView(width, height int) string {
 	case sectionTracking:
 		title, body, footer = "TRACKING", a.trackingLines(), " s start/switch selected task  x stop  t log time  W workspace  q quit"
 	case sectionSprints:
-		title, body, footer = "SPRINTS", a.sprintLines(), " ↑/↓ select  n new  a assign task  u unassign  d remove  W workspace  q quit"
+		title, body, footer = "SPRINTS", a.sprintLines(), " ↑/↓ select  n new  e edit  a assign  u unassign  d remove  pgup/pgdn scroll"
 	case sectionReports:
-		title, body, footer = "REPORTS", a.reportLines(), " ←/→ report: overview · daily · WBS · timeline · compare  W workspace  q quit"
+		title, body, footer = "REPORTS", a.reportLines(), " ←/→ report  ↑/↓ or pgup/pgdn scroll  W workspace  q quit"
 	default:
-		title, body, footer = "HEALTH", a.healthLines(), " ↑/↓ backup  b create  e export  o restore  c cleanup  r refresh  W workspace"
+		title, body, footer = "HEALTH", a.healthLines(), " ↑/↓ backup  pgup/pgdn scroll  b create  e export  o restore  c cleanup"
 	}
-	lines := box(title, body, width, height-3, true)
+	visibleHeight := max(1, height-5)
+	a.sectionScroll = clamp(a.sectionScroll, 0, max(0, len(body)-visibleHeight))
+	visibleBody := scrollWindow(body, a.sectionScroll, visibleHeight)
+	lines := box(scrollOffsetTitle(title, a.sectionScroll, len(body), visibleHeight), visibleBody, width, height-3, true)
 	var b strings.Builder
 	b.WriteString(a.navigation(width, title) + "\n")
 	b.WriteString(dim + fit(a.projectSummary(), width) + reset + "\n")
@@ -241,10 +287,11 @@ func (a *app) sectionView(width, height int) string {
 		status = a.message + "  • " + footer
 	}
 	b.WriteString(color + fit(status, width) + reset)
+	base := b.String()
 	if a.form != nil || a.confirmation != nil {
-		return a.modalView(width, height)
+		return a.modalView(base, width, height)
 	}
-	return b.String()
+	return base
 }
 
 func (a *app) projectSummary() string {
@@ -298,7 +345,7 @@ func (a *app) sprintLines() []string {
 	if len(a.project.Sprints) == 0 {
 		return []string{"No sprints yet.", "", "Press n to create the first sprint."}
 	}
-	lines := []string{"SPRINT                    PERIOD                    TASKS   DONE   PROGRESS", ""}
+	lines := []string{tableHeader("  SPRINT                    PERIOD                    TASKS   DONE   PROGRESS", max(1, a.width-2))}
 	for i, sprint := range a.project.Sprints {
 		done := 0
 		for _, id := range sprint.TaskIDs {
@@ -310,11 +357,8 @@ func (a *app) sprintLines() []string {
 		if len(sprint.TaskIDs) > 0 {
 			percent = float64(done) / float64(len(sprint.TaskIDs)) * 100
 		}
-		prefix := "  "
-		if i == a.sprintIndex {
-			prefix = "> "
-		}
-		lines = append(lines, fmt.Sprintf("%s%-24s %s → %s   %3d    %3d   %s %.0f%%", prefix, sprint.Name, sprint.StartDate, sprint.EndDate, len(sprint.TaskIDs), done, progressBar(percent, 12), percent))
+		row := fmt.Sprintf("  %-24s %s → %s   %3d    %3d   %s %.0f%%", sprint.Name, sprint.StartDate, sprint.EndDate, len(sprint.TaskIDs), done, progressBar(percent, 12), percent)
+		lines = append(lines, tableRow(row, max(1, a.width-2), i, i == a.sprintIndex, ""))
 	}
 	if len(a.tasks) > 0 {
 		lines = append(lines, "", fmt.Sprintf("Task used by assign/unassign: [%s] %s", a.tasks[a.taskIndex].task.ID, a.tasks[a.taskIndex].task.Title))
@@ -369,10 +413,11 @@ func (a *app) reportLines() []string {
 		if err != nil {
 			return append(lines, "Error: "+err.Error())
 		}
-		lines = append(lines, "PROJECT                    TASKS  DONE  ESTIMATE  ACTUAL  COMPLETE", "")
-		for _, project := range projects {
+		lines = append(lines, tableHeader("  PROJECT                    TASKS  DONE  ESTIMATE  ACTUAL  COMPLETE", max(1, a.width-2)))
+		for i, project := range projects {
 			counts := project.CountByStatus()
-			lines = append(lines, fmt.Sprintf("%-28s %5d %5d %8.2fh %7.2fh %8.1f%%", project.Name, len(project.GetAllTasks()), counts[models.StatusDone], project.CalculateTotalEstimated(), project.CalculateTotalActual(), project.GetCompletionPercentage()))
+			row := fmt.Sprintf("  %-28s %5d %5d %8.2fh %7.2fh %8.1f%%", project.Name, len(project.GetAllTasks()), counts[models.StatusDone], project.CalculateTotalEstimated(), project.CalculateTotalActual(), project.GetCompletionPercentage())
+			lines = append(lines, tableRow(row, max(1, a.width-2), i, false, ""))
 		}
 		return lines
 	}
@@ -447,12 +492,10 @@ func (a *app) healthLines() []string {
 	} else if len(backups) == 0 {
 		lines = append(lines, "No backups yet. Press b to create one.")
 	} else {
+		lines = append(lines, tableHeader("  BACKUP                                 SIZE       CREATED", max(1, a.width-2)))
 		for i, backup := range backups {
-			prefix := "  "
-			if i == a.backupIndex {
-				prefix = "> "
-			}
-			lines = append(lines, fmt.Sprintf("%s%-38s %8.2f MB  %s", prefix, backup.Name, float64(backup.Size)/1024/1024, backup.ModTime.Format("2006-01-02 15:04")))
+			row := fmt.Sprintf("  %-38s %8.2f MB  %s", backup.Name, float64(backup.Size)/1024/1024, backup.ModTime.Format("2006-01-02 15:04"))
+			lines = append(lines, tableRow(row, max(1, a.width-2), i, i == a.backupIndex, ""))
 		}
 	}
 	return lines

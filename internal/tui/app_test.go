@@ -216,9 +216,22 @@ func TestTaskCreateAndEditWorkflowUsesFullTaskFields(t *testing.T) {
 
 func TestFormsRenderAsCenteredModal(t *testing.T) {
 	a := &app{width: 100, height: 30}
-	a.form = &inputForm{kind: "project", title: "Create project", fields: []inputField{{label: "Name", value: []rune("launch")}}}
+	a.projects = []string{"background-project"}
+	a.form = &inputForm{kind: "project", title: "Create project", fields: []inputField{
+		{label: "Name", value: []rune("launch")},
+		{label: "Description", value: []rune("Visible in the same modal")},
+		{label: "Tags", value: []rune("release")},
+	}}
 
 	view := a.View()
+	for _, expected := range []string{"Create project", "launch", "Description", "Visible in the same modal", "Tags", "release", "background-project"} {
+		if !strings.Contains(stripANSI(view), expected) {
+			t.Fatalf("modal missing %q:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(stripANSI(view), "····") {
+		t.Fatalf("modal still replaces background with dots:\n%s", view)
+	}
 	if !strings.Contains(view, "Create project") || !strings.Contains(view, "launch") {
 		t.Fatalf("modal content missing:\n%s", view)
 	}
@@ -232,6 +245,68 @@ func TestFormsRenderAsCenteredModal(t *testing.T) {
 	}
 	if firstContent < 5 || firstContent > 15 {
 		t.Fatalf("modal title line = %d, want vertically centered", firstContent)
+	}
+}
+
+func TestFormNavigationKeepsFieldsInOneForm(t *testing.T) {
+	a := &app{form: &inputForm{fields: []inputField{{label: "One"}, {label: "Two"}, {label: "Three"}}}}
+	if err := a.updateForm(keyEvent{name: "down"}); err != nil {
+		t.Fatal(err)
+	}
+	if a.form == nil || a.form.index != 1 {
+		t.Fatalf("form after down = %#v", a.form)
+	}
+	if err := a.updateForm(keyEvent{name: "up"}); err != nil {
+		t.Fatal(err)
+	}
+	if a.form == nil || a.form.index != 0 {
+		t.Fatalf("form after up = %#v", a.form)
+	}
+}
+
+func TestProjectEditCanRenameProject(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.Get()
+	if _, err := store.CreateProject("launch", "old", []string{"one"}); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{store: store, moduleIndex: -1}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatal(err)
+	}
+	a.startProjectEditForm()
+	a.form.fields[0].value = []rune("release")
+	a.form.fields[1].value = []rune("new description")
+	a.form.fields[2].value = []rune("two, three")
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("submitForm() error: %v", err)
+	}
+	if store.ProjectExists("launch") || !store.ProjectExists("release") {
+		t.Fatalf("project paths after edit: launch=%v release=%v", store.ProjectExists("launch"), store.ProjectExists("release"))
+	}
+	if a.project == nil || a.project.Name != "release" || a.project.Description != "new description" {
+		t.Fatalf("selected project after rename = %#v", a.project)
+	}
+}
+
+func TestDetailPaneScrollsVertically(t *testing.T) {
+	a := &app{
+		focus:   3,
+		height:  22,
+		project: &models.Project{Name: "launch", Description: strings.Repeat("details ", 20)},
+	}
+	a.showHelp = true
+	if err := a.move(3); err != nil {
+		t.Fatal(err)
+	}
+	if a.detailScroll == 0 {
+		t.Fatal("detail pane did not scroll")
 	}
 }
 

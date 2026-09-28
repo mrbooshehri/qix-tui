@@ -10,7 +10,7 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 ## Highlights
 
 - Full-screen [Bubble Tea](https://github.com/charmbracelet/bubbletea) interface with keyboard navigation
-- Centered modal forms for creating, editing, and confirming changes
+- Centered, scrollable modal forms that keep the workspace visible behind them
 - Fast task-status workflow: `todo`, `doing`, `done`, and `blocked`
 - Hierarchical projects with modules and project-level tasks
 - Priorities, tags, dependencies, parent/child links, recurrence, and Jira links
@@ -100,8 +100,9 @@ Workspace controls:
 
 | Key | Action |
 | --- | --- |
-| `↑` / `↓`, `j` / `k` | Move through the focused list |
-| `Tab`, `←` / `→` | Change the focused pane |
+| `↑` / `↓`, `j` / `k` | Move or vertically scroll the focused pane |
+| `Page Up` / `Page Down`, `Home` / `End` | Scroll a page or jump to a boundary |
+| `Tab`, `←` / `→` | Change focus between projects, modules, tasks, and details |
 | `n` | Create a task in the selected project or module |
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |
@@ -118,19 +119,22 @@ Workspace controls:
 | `r` | Reload projects and tasks from disk |
 | `?` | Toggle help |
 | `q` or `Ctrl-C` | Quit |
-| `Enter` | Advance or submit a modal form |
+| `Enter` | Advance to the next modal field or save on the last field |
+| `Ctrl-S` | Save every field in the current modal immediately |
 | `Esc` or `Ctrl-G` | Cancel a modal form |
 
-Task create/edit modals cover title, description, status, priority, estimated hours, tags, and Jira issue. The task detail pane also displays time totals, parent/dependency relationships, recurrence, and Jira linkage.
+Every modal shows all of its fields together; `↑`/`↓`, `Tab`, and `Shift-Tab` move between fields, and compact terminals scroll the form to keep the active field visible. Project names, descriptions, and tags are editable, as are module names/descriptions/tags, sprint names/dates, and all task metadata. Renaming a project also updates its filename, task index, and active tracking path.
+
+List panes use alternating table rows, status colors, and a highlighted selected row. Every pane is vertically scrollable, including task details and long report or health views.
 
 Screen-specific controls:
 
 | Screen | Controls |
 | --- | --- |
 | Tracking | `s` start/switch to the Workspace-selected task, `x` stop, `t` manually log time |
-| Sprints | `↑`/`↓` select, `n` create, `a` assign selected task, `u` unassign, `d` remove |
-| Reports | `←`/`→` cycle overview, daily, WBS, timeline, and project comparison |
-| Health | `↑`/`↓` select backup, `b` create, `e` export, `o` restore, `c` clean expired backups, `r` refresh checks |
+| Sprints | `↑`/`↓` select, `n` create, `e` edit, `a` assign selected task, `u` unassign, `d` remove |
+| Reports | `←`/`→` cycle reports; `↑`/`↓` or `Page Up`/`Page Down` scroll vertically |
+| Health | `↑`/`↓` select backup, `Page Up`/`Page Down` scroll, `b` create, `e` export, `o` restore, `c` clean expired backups |
 
 The TUI is built with Bubble Tea `v1.2.4` and Lip Gloss `v1.0.0`, versions selected to retain the repository's Go 1.21 compatibility.
 
