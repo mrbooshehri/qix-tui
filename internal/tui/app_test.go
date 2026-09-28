@@ -100,3 +100,68 @@ func TestProjectCreateAndDeleteWorkflow(t *testing.T) {
 		t.Fatal("project still exists after confirmed deletion")
 	}
 }
+
+func TestModuleCreateEditAndDeleteWorkflow(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatalf("config.Init() error: %v", err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatalf("storage.Init() error: %v", err)
+	}
+	store := storage.Get()
+	if _, err := store.CreateProject("launch", "", nil); err != nil {
+		t.Fatalf("CreateProject() error: %v", err)
+	}
+
+	a := &app{store: store, moduleIndex: -1}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatalf("loadProjects() error: %v", err)
+	}
+	a.startModuleForm()
+	a.form.fields[0].value = []rune("api")
+	a.form.fields[1].value = []rune("Backend API")
+	a.form.fields[2].value = []rune("backend, critical")
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("create module submitForm() error: %v", err)
+	}
+
+	module, err := store.GetModule("launch", "api")
+	if err != nil {
+		t.Fatalf("GetModule() error: %v", err)
+	}
+	if module.Description != "Backend API" || strings.Join(module.Tags, ",") != "backend,critical" {
+		t.Fatalf("created module = %#v", module)
+	}
+
+	if err := store.AddTask("launch", "api", models.Task{Title: "Build endpoint", Status: models.StatusDone, EstimatedHours: 3}); err != nil {
+		t.Fatalf("AddTask() error: %v", err)
+	}
+	if err := a.loadProject(); err != nil {
+		t.Fatalf("loadProject() error: %v", err)
+	}
+	if len(a.tasks) != 1 || a.tasks[0].location != "api" {
+		t.Fatalf("module task scope = %#v", a.tasks)
+	}
+	if details := strings.Join(a.moduleDetailLines(), "\n"); !strings.Contains(details, "Completion: [####################] 100.0%") {
+		t.Fatalf("module details missing completion KPI:\n%s", details)
+	}
+
+	a.startModuleEditForm()
+	a.form.fields[0].value = []rune("service")
+	a.form.fields[1].value = []rune("Public service")
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("edit module submitForm() error: %v", err)
+	}
+	if _, err := store.GetModule("launch", "service"); err != nil {
+		t.Fatalf("renamed module not found: %v", err)
+	}
+
+	a.confirmation = &confirmation{kind: "delete-module", expected: "service", input: []rune("service")}
+	if err := a.updateConfirmation(keyEvent{name: "enter"}); err != nil {
+		t.Fatalf("delete module confirmation error: %v", err)
+	}
+	if _, err := store.GetModule("launch", "service"); err == nil {
+		t.Fatal("module still exists after confirmed removal")
+	}
+}

@@ -178,6 +178,7 @@ type app struct {
 	projects     []string
 	projectIndex int
 	project      *models.Project
+	moduleIndex  int
 	tasks        []taskItem
 	taskIndex    int
 	focus        int
@@ -196,7 +197,7 @@ func Run(store *storage.Storage, initialProject string) error {
 	}
 	defer term.close()
 
-	a := &app{store: store}
+	a := &app{store: store, moduleIndex: -1}
 	if err := a.loadProjects(initialProject); err != nil {
 		return err
 	}
@@ -226,7 +227,7 @@ func (a *app) loadProjects(selectName string) error {
 	sort.Strings(projects)
 	a.projects = projects
 	if len(projects) == 0 {
-		a.project, a.tasks, a.projectIndex, a.taskIndex = nil, nil, 0, 0
+		a.project, a.tasks, a.projectIndex, a.taskIndex, a.moduleIndex = nil, nil, 0, 0, -1
 		return nil
 	}
 	if a.projectIndex >= len(projects) {
@@ -250,11 +251,23 @@ func (a *app) loadProject() error {
 		return fmt.Errorf("load project %q: %w", a.projects[a.projectIndex], err)
 	}
 	a.project = project
-	a.tasks = a.tasks[:0]
-	for _, task := range project.Tasks {
-		a.tasks = append(a.tasks, taskItem{task: task, location: "project"})
+	if a.moduleIndex >= len(project.Modules) {
+		a.moduleIndex = len(project.Modules) - 1
 	}
-	for _, module := range project.Modules {
+	return a.loadTasks()
+}
+
+func (a *app) loadTasks() error {
+	a.tasks = a.tasks[:0]
+	if a.project == nil {
+		return nil
+	}
+	if a.moduleIndex < 0 {
+		for _, task := range a.project.Tasks {
+			a.tasks = append(a.tasks, taskItem{task: task, location: "project"})
+		}
+	} else {
+		module := a.project.Modules[a.moduleIndex]
 		for _, task := range module.Tasks {
 			a.tasks = append(a.tasks, taskItem{task: task, location: module.Name})
 		}
@@ -291,11 +304,13 @@ func (a *app) update(key keyEvent) (bool, error) {
 	a.message, a.isError = "", false
 	switch {
 	case key.name == "tab":
-		a.focus = (a.focus + 1) % 2
+		a.focus = (a.focus + 1) % 3
 	case key.name == "left":
-		a.focus = 0
-	case key.name == "right" || key.name == "enter" && a.focus == 0:
-		a.focus = 1
+		a.focus = max(0, a.focus-1)
+	case key.name == "right":
+		a.focus = min(2, a.focus+1)
+	case key.name == "enter" && a.focus < 2:
+		a.focus++
 	case key.name == "up" || key.r == 'k':
 		return false, a.move(-1)
 	case key.name == "down" || key.r == 'j':
@@ -312,6 +327,16 @@ func (a *app) update(key keyEvent) (bool, error) {
 		a.message = "Data refreshed"
 	case key.r == 'p':
 		a.startProjectForm()
+	case key.r == 'm':
+		if a.project == nil {
+			return false, fmt.Errorf("create a project first with p")
+		}
+		a.startModuleForm()
+	case key.r == 'e' && a.focus == 1:
+		if a.project == nil || a.moduleIndex < 0 {
+			return false, fmt.Errorf("select a module to edit")
+		}
+		a.startModuleEditForm()
 	case key.r == 'n':
 		if a.project == nil {
 			return false, fmt.Errorf("create a project first with p")
@@ -325,6 +350,16 @@ func (a *app) update(key keyEvent) (bool, error) {
 			kind:     "delete-project",
 			prompt:   fmt.Sprintf("Delete %s and all its data? Type the project name", a.project.Name),
 			expected: a.project.Name,
+		}
+	case key.r == 'd' && a.focus == 1:
+		if a.project == nil || a.moduleIndex < 0 {
+			return false, fmt.Errorf("select a module to remove")
+		}
+		module := a.project.Modules[a.moduleIndex]
+		a.confirmation = &confirmation{
+			kind:     "delete-module",
+			prompt:   fmt.Sprintf("Remove %s and its %d task(s)? Type the module name", module.Name, len(module.Tasks)),
+			expected: module.Name,
 		}
 	case key.name == "space" || key.r == 'x':
 		return false, a.cycleStatus()
@@ -343,6 +378,30 @@ func (a *app) startProjectForm() {
 			{label: "Name", required: true},
 			{label: "Description"},
 			{label: "Tags (comma-separated)"},
+		},
+	}
+}
+
+func (a *app) startModuleForm() {
+	a.form = &inputForm{
+		kind:  "module",
+		title: "Create module in " + a.project.Name,
+		fields: []inputField{
+			{label: "Name", required: true},
+			{label: "Description"},
+			{label: "Tags (comma-separated)"},
+		},
+	}
+}
+
+func (a *app) startModuleEditForm() {
+	module := a.project.Modules[a.moduleIndex]
+	a.form = &inputForm{
+		kind:  "edit-module",
+		title: "Edit module " + module.Name,
+		fields: []inputField{
+			{label: "Name", value: []rune(module.Name), required: true},
+			{label: "Description", value: []rune(module.Description)},
 		},
 	}
 }
@@ -400,9 +459,52 @@ func (a *app) submitForm() error {
 		a.message = "Created project " + name
 		return nil
 	}
+	if form.kind == "module" {
+		name := strings.TrimSpace(string(form.fields[0].value))
+		description := strings.TrimSpace(string(form.fields[1].value))
+		tags := splitCommaSeparated(string(form.fields[2].value))
+		module := models.Module{Name: name, Description: description, Tags: tags}
+		if err := a.store.AddModule(a.project.Name, module); err != nil {
+			return err
+		}
+		a.form = nil
+		a.moduleIndex = len(a.project.Modules)
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.focus = 1
+		a.message = "Created module " + name
+		return nil
+	}
+	if form.kind == "edit-module" {
+		oldName := a.project.Modules[a.moduleIndex].Name
+		newName := strings.TrimSpace(string(form.fields[0].value))
+		description := strings.TrimSpace(string(form.fields[1].value))
+		if err := a.store.UpdateModule(a.project.Name, oldName, func(module *models.Module) error {
+			module.Name = newName
+			module.Description = description
+			return nil
+		}); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProject(); err != nil {
+			return err
+		}
+		a.focus = 1
+		a.message = "Updated module " + oldName
+		if newName != oldName {
+			a.message = fmt.Sprintf("Renamed module %s to %s", oldName, newName)
+		}
+		return nil
+	}
 
 	title := strings.TrimSpace(string(form.fields[0].value))
-	if err := a.store.AddTask(a.projects[a.projectIndex], "", models.Task{Title: title}); err != nil {
+	moduleName := ""
+	if a.moduleIndex >= 0 {
+		moduleName = a.project.Modules[a.moduleIndex].Name
+	}
+	if err := a.store.AddTask(a.projects[a.projectIndex], moduleName, models.Task{Title: title}); err != nil {
 		return err
 	}
 	a.form = nil
@@ -410,7 +512,7 @@ func (a *app) submitForm() error {
 		return err
 	}
 	a.taskIndex = len(a.tasks) - 1
-	a.focus = 1
+	a.focus = 2
 	a.message = "Created task " + title
 	return nil
 }
@@ -441,6 +543,21 @@ func (a *app) updateConfirmation(key keyEvent) error {
 			a.focus = 0
 			a.message = "Deleted project " + name
 		}
+		if confirm.kind == "delete-module" {
+			projectName := a.project.Name
+			moduleName := confirm.expected
+			if err := a.store.RemoveModule(projectName, moduleName); err != nil {
+				return err
+			}
+			a.confirmation = nil
+			a.moduleIndex = -1
+			a.taskIndex = 0
+			if err := a.loadProject(); err != nil {
+				return err
+			}
+			a.focus = 1
+			a.message = "Removed module " + moduleName
+		}
 	default:
 		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
 			confirm.input = append(confirm.input, key.r)
@@ -455,17 +572,26 @@ func (a *app) move(delta int) error {
 			return nil
 		}
 		a.projectIndex = clamp(a.projectIndex+delta, 0, len(a.projects)-1)
+		a.moduleIndex = -1
 		a.taskIndex = 0
 		return a.loadProject()
 	}
-	if len(a.tasks) > 0 {
+	if a.focus == 1 {
+		if a.project == nil {
+			return nil
+		}
+		a.moduleIndex = clamp(a.moduleIndex+delta, -1, len(a.project.Modules)-1)
+		a.taskIndex = 0
+		return a.loadTasks()
+	}
+	if a.focus == 2 && len(a.tasks) > 0 {
 		a.taskIndex = clamp(a.taskIndex+delta, 0, len(a.tasks)-1)
 	}
 	return nil
 }
 
 func (a *app) cycleStatus() error {
-	if len(a.tasks) == 0 || a.focus != 1 {
+	if len(a.tasks) == 0 || a.focus != 2 {
 		return nil
 	}
 	current := a.tasks[a.taskIndex].task.Status
@@ -482,7 +608,7 @@ func (a *app) cycleStatus() error {
 }
 
 func (a *app) setStatus(status models.TaskStatus) error {
-	if len(a.tasks) == 0 || a.focus != 1 {
+	if len(a.tasks) == 0 || a.focus != 2 {
 		return nil
 	}
 	item := a.tasks[a.taskIndex]
@@ -503,6 +629,8 @@ func (a *app) view(width, height int) string {
 	contentHeight := height - 4
 	projectWidth := clamp(width/4, 24, 34)
 	mainWidth := width - projectWidth - 1
+	projectHeight := max(7, contentHeight/2)
+	moduleHeight := contentHeight - projectHeight
 	taskHeight := max(9, contentHeight*3/5)
 	detailHeight := contentHeight - taskHeight
 
@@ -518,7 +646,29 @@ func (a *app) view(width, height int) string {
 		projectLines = append(projectLines, prefix+name)
 	}
 	if len(a.projects) > 0 {
-		projectLines = visibleWindow(projectLines, a.projectIndex, contentHeight-2)
+		projectLines = visibleWindow(projectLines, a.projectIndex, projectHeight-2)
+	}
+
+	moduleLines := make([]string, 0, 1)
+	if a.project == nil {
+		moduleLines = append(moduleLines, "  Select a project")
+	} else {
+		rootPrefix := "  "
+		if a.moduleIndex < 0 {
+			rootPrefix = "> "
+		}
+		moduleLines = append(moduleLines, rootPrefix+"(project tasks)")
+		for i, module := range a.project.Modules {
+			prefix := "  "
+			if i == a.moduleIndex {
+				prefix = "> "
+			}
+			moduleLines = append(moduleLines, fmt.Sprintf("%s%s (%d)", prefix, module.Name, len(module.Tasks)))
+		}
+		if len(a.project.Modules) == 0 {
+			moduleLines = append(moduleLines, "", "  Press m to create one")
+		}
+		moduleLines = visibleWindow(moduleLines, a.moduleIndex+1, moduleHeight-2)
 	}
 
 	taskLines := make([]string, 0, len(a.tasks)+1)
@@ -537,8 +687,14 @@ func (a *app) view(width, height int) string {
 	}
 
 	details := a.detailLines()
-	left := box("Projects", projectLines, projectWidth, contentHeight, a.focus == 0)
-	topRight := box("Tasks", taskLines, mainWidth, taskHeight, a.focus == 1)
+	projectBox := box("Projects", projectLines, projectWidth, projectHeight, a.focus == 0)
+	moduleBox := box("Modules", moduleLines, projectWidth, moduleHeight, a.focus == 1)
+	left := append(projectBox, moduleBox...)
+	taskTitle := "Project Tasks"
+	if a.project != nil && a.moduleIndex >= 0 {
+		taskTitle = "Tasks • " + a.project.Modules[a.moduleIndex].Name
+	}
+	topRight := box(taskTitle, taskLines, mainWidth, taskHeight, a.focus == 2)
 	bottomRight := box("Details", details, mainWidth, detailHeight, false)
 	right := append(topRight, bottomRight...)
 
@@ -548,13 +704,13 @@ func (a *app) view(width, height int) string {
 	summary := " No project selected"
 	if a.project != nil {
 		counts := a.project.CountByStatus()
-		summary = fmt.Sprintf(" %s  •  %d tasks  •  %d doing  •  %.0f%% complete", a.project.Name, len(a.tasks), counts[models.StatusDoing], a.project.GetCompletionPercentage())
+		summary = fmt.Sprintf(" %s  •  %d modules  •  %d tasks  •  %d doing  •  %.0f%% complete", a.project.Name, len(a.project.Modules), len(a.project.GetAllTasks()), counts[models.StatusDoing], a.project.GetCompletionPercentage())
 	}
 	b.WriteString(dim + fit(summary, width) + reset + "\r\n")
 	for i := 0; i < contentHeight; i++ {
 		b.WriteString(left[i] + " " + right[i] + "\r\n")
 	}
-	b.WriteString(dim + fit(" ↑/↓ move  tab/←/→ focus  p new project  d delete project  n new task  space status  ? help  q quit", width) + reset + "\r\n")
+	b.WriteString(dim + fit(" ↑/↓ move  tab focus  p project  m module  e edit module  d remove selected  n task  space status  ? help  q quit", width) + reset + "\r\n")
 	footer := a.message
 	color := green
 	if a.isError {
@@ -584,9 +740,10 @@ func (a *app) view(width, height int) string {
 func (a *app) detailLines() []string {
 	if a.showHelp {
 		return []string{
-			"Navigation: arrows or j/k; tab changes pane",
-			"p: new project    d: delete selected project",
-			"n: new task       r: refresh from disk",
+			"Navigation: arrows or j/k; tab/left/right changes pane",
+			"p: new project    m: new module    n: new task",
+			"e: edit module    d: remove focused project/module",
+			"r: refresh from disk",
 			"space/x: cycle status    1-4: set status",
 			"1 todo  2 doing  3 done  4 blocked",
 			"?: close help    q: quit",
@@ -594,6 +751,9 @@ func (a *app) detailLines() []string {
 	}
 	if a.focus == 0 {
 		return a.projectDetailLines()
+	}
+	if a.focus == 1 {
+		return a.moduleDetailLines()
 	}
 	if len(a.tasks) == 0 {
 		return []string{"Select a task to see its details."}
@@ -610,6 +770,47 @@ func (a *app) detailLines() []string {
 	}
 	if len(task.Tags) > 0 {
 		lines = append(lines, "Tags: "+strings.Join(task.Tags, ", "))
+	}
+	return lines
+}
+
+func (a *app) moduleDetailLines() []string {
+	if a.project == nil {
+		return []string{"Select a project first."}
+	}
+	if a.moduleIndex < 0 {
+		return []string{
+			bold + "Project-level tasks" + reset,
+			"Tasks here belong directly to " + a.project.Name + ".",
+			"Select a module below, or press m to create one.",
+		}
+	}
+	module := a.project.Modules[a.moduleIndex]
+	counts := map[models.TaskStatus]int{}
+	estimated, actual := 0.0, 0.0
+	for _, task := range module.Tasks {
+		counts[task.Status]++
+		estimated += task.EstimatedHours
+		actual += task.CalculateActualHours()
+	}
+	completion := 0.0
+	if len(module.Tasks) > 0 {
+		completion = float64(counts[models.StatusDone]) / float64(len(module.Tasks)) * 100
+	}
+	lines := []string{
+		bold + module.Name + reset,
+		fmt.Sprintf("Tasks: %d    Todo: %d    Doing: %d    Done: %d    Blocked: %d", len(module.Tasks), counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
+		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", estimated, actual),
+		fmt.Sprintf("Completion: %s %.1f%%", progressBar(completion, 20), completion),
+	}
+	if module.Description != "" {
+		lines = append(lines, "Description: "+module.Description)
+	}
+	if len(module.Tags) > 0 {
+		lines = append(lines, "Tags: "+strings.Join(module.Tags, ", "))
+	}
+	if !module.CreatedAt.IsZero() {
+		lines = append(lines, "Created: "+module.CreatedAt.Format("2006-01-02 15:04"))
 	}
 	return lines
 }

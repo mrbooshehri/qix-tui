@@ -26,13 +26,13 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 ```text
  QIX / PROJECT WORKSPACE
  launch  •  8 tasks  •  2 doing  •  38% complete
-┌─ Projects ──────────┐ ┌─ Tasks ─────────────────────────────────────┐
+┌─ Projects ──────────┐ ┌─ Tasks • backend ───────────────────────────┐
 │> launch             │ │> doing  a17bc332  Build terminal workspace │
 │  website            │ │  todo   811ca0f1  Write onboarding guide  │
-│  operations         │ └────────────────────────────────────────────┘
-│                     │ ┌─ Details ───────────────────────────────────┐
-│                     │ │Build terminal workspace                    │
-│                     │ │Status: doing  Priority: high               │
+├─ Modules ───────────┤ └────────────────────────────────────────────┘
+│  (project tasks)    │ ┌─ Details ───────────────────────────────────┐
+│> backend (2)        │ │Build terminal workspace                    │
+│  frontend (3)       │ │Status: doing  Priority: high               │
 └─────────────────────┘ └────────────────────────────────────────────┘
 ```
 
@@ -93,7 +93,9 @@ qix tui --project launch
 | `Tab`, `←` / `→` | Change the focused pane |
 | `n` | Create a task in the selected project |
 | `p` | Create a project with a name, description, and tags |
-| `d` | Delete the selected project after name confirmation |
+| `m` | Create a module with a name, description, and tags |
+| `e` | Edit the selected module's name and description |
+| `d` | Delete the focused project or module after name confirmation |
 | `Space` or `x` | Cycle the selected task's status |
 | `1` / `2` / `3` / `4` | Set `todo` / `doing` / `done` / `blocked` |
 | `r` | Reload projects and tasks from disk |
@@ -102,7 +104,7 @@ qix tui --project launch
 | `Enter` | Submit inline input |
 | `Ctrl-G` | Cancel inline input |
 
-With the project pane focused, the details panel shows the selected project's description, tags, modules, sprints, status counts, estimated and actual hours, and completion percentage. The TUI creates tasks at the project level; use `qix task create PROJECT/MODULE ...` when a task should belong to a module.
+With the project pane focused, the details panel shows the selected project's description, tags, modules, sprints, status counts, estimated and actual hours, and completion percentage. The module pane contains a `(project tasks)` scope plus every module in the project. Selecting a scope filters the task pane; new tasks are created in that selected scope. Module details include tags, task counts, estimated and actual hours, and completion.
 
 ## CLI
 
