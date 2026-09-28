@@ -11,6 +11,7 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 
 - Full-screen [Bubble Tea](https://github.com/charmbracelet/bubbletea) interface with keyboard navigation
 - Centered, scrollable modal forms that keep the workspace visible behind them
+- Multi-select task actions for bulk status changes and deletion
 - Fast task-status workflow: `todo`, `doing`, `done`, and `blocked`
 - Hierarchical projects with modules and project-level tasks
 - Priorities, tags, dependencies, parent/child links, recurrence, and Jira links
@@ -107,9 +108,12 @@ Workspace controls:
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |
 | `e` | Edit the focused project, module, or task |
-| `d` | Delete the focused project, module, or task after typed confirmation |
-| `Space` or `x` | Cycle the selected task's status |
-| `1` / `2` / `3` / `4` | Set `todo` / `doing` / `done` / `blocked` |
+| `Space` | Mark or unmark the focused task for bulk actions |
+| `a` | Mark or unmark every task in the visible project/module scope |
+| `d` | Delete marked tasks (or the focused item); task deletion uses Enter/Esc confirmation |
+| `x` | Cycle the focused task's status, or every marked task from its status |
+| `1` / `2` / `3` / `4` | Set marked tasks (or the focused task) to `todo` / `doing` / `done` / `blocked` |
+| `Esc` | Clear marked tasks; inside a modal, cancel it |
 | `l` | Link the selected task to a parent task |
 | `y` | Add a dependency to the selected task |
 | `c` / `u` | Set or remove recurrence |
@@ -121,11 +125,11 @@ Workspace controls:
 | `q` or `Ctrl-C` | Quit |
 | `Enter` | Advance to the next modal field or save on the last field |
 | `Ctrl-S` | Save every field in the current modal immediately |
-| `Esc` or `Ctrl-G` | Cancel a modal form |
+| `Ctrl-G` | Cancel a modal form |
 
 Every modal shows all of its fields together; `↑`/`↓`, `Tab`, and `Shift-Tab` move between fields, and compact terminals scroll the form to keep the active field visible. Project names, descriptions, and tags are editable, as are module names/descriptions/tags, sprint names/dates, and all task metadata. Renaming a project also updates its filename, task index, and active tracking path.
 
-List panes use alternating table rows, status colors, and a highlighted selected row. Every pane is vertically scrollable, including task details and long report or health views.
+List panes use alternating table rows, status colors, and a highlighted cursor row. Task rows include `[ ]`/`[x]` selection markers; selections remain active while moving between modules in the same project so one bulk action can span scopes. Every pane is vertically scrollable, including task details and long report or health views.
 
 Screen-specific controls:
 

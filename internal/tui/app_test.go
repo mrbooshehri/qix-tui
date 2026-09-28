@@ -214,6 +214,104 @@ func TestTaskCreateAndEditWorkflowUsesFullTaskFields(t *testing.T) {
 	}
 }
 
+func TestTaskMultiSelectChangesStatusAcrossScopes(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.Get()
+	if _, err := store.CreateProject("launch", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddTask("launch", "", models.Task{ID: "project-task", Title: "Project task"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddModule("launch", models.Module{Name: "api"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddTask("launch", "api", models.Task{ID: "module-task", Title: "Module task"}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{store: store, moduleIndex: -1, focus: 2}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.updateKey(keyEvent{name: "space", r: ' '}); err != nil {
+		t.Fatal(err)
+	}
+	a.moduleIndex = 0
+	if err := a.loadTasks(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.updateKey(keyEvent{name: "space", r: ' '}); err != nil {
+		t.Fatal(err)
+	}
+	if a.selectedTaskCount() != 2 {
+		t.Fatalf("selected = %d, want 2", a.selectedTaskCount())
+	}
+	if _, err := a.updateKey(keyEvent{r: '3'}); err != nil {
+		t.Fatal(err)
+	}
+	if a.selectedTaskCount() != 0 {
+		t.Fatalf("selection not cleared after bulk status: %#v", a.selectedTasks)
+	}
+	for _, id := range []string{"project-task", "module-task"} {
+		task, _, err := store.FindTask("launch", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if task.Status != models.StatusDone {
+			t.Fatalf("task %s status = %s, want done", id, task.Status)
+		}
+	}
+}
+
+func TestTaskDeleteConfirmsWithEnterAndSupportsBulkSelection(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.Get()
+	if _, err := store.CreateProject("launch", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, task := range []models.Task{{ID: "one", Title: "One"}, {ID: "two", Title: "Two"}} {
+		if err := store.AddTask("launch", "", task); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	a := &app{store: store, moduleIndex: -1, focus: 2, width: 100, height: 30}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.updateKey(keyEvent{r: 'a'}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.updateKey(keyEvent{r: 'd'}); err != nil {
+		t.Fatal(err)
+	}
+	if a.confirmation == nil || a.confirmation.expected != "" || len(a.confirmation.taskIDs) != 2 {
+		t.Fatalf("bulk confirmation = %#v", a.confirmation)
+	}
+	if view := stripANSI(a.View()); !strings.Contains(view, "enter confirms") || strings.Contains(view, "type the exact value") {
+		t.Fatalf("task confirmation still asks for typed ID:\n%s", view)
+	}
+	if err := a.updateConfirmation(keyEvent{name: "enter"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.project.GetAllTasks()) != 0 {
+		t.Fatalf("tasks remain after bulk delete: %#v", a.project.GetAllTasks())
+	}
+}
+
 func TestFormsRenderAsCenteredModal(t *testing.T) {
 	a := &app{width: 100, height: 30}
 	a.projects = []string{"background-project"}

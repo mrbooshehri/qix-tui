@@ -55,30 +55,33 @@ type confirmation struct {
 	prompt   string
 	expected string
 	input    []rune
+	taskIDs  []string
 }
 
 type app struct {
-	store         *storage.Storage
-	projects      []string
-	projectIndex  int
-	project       *models.Project
-	moduleIndex   int
-	tasks         []taskItem
-	taskIndex     int
-	focus         int
-	form          *inputForm
-	confirmation  *confirmation
-	message       string
-	isError       bool
-	showHelp      bool
-	width         int
-	height        int
-	section       int
-	sprintIndex   int
-	reportIndex   int
-	backupIndex   int
-	detailScroll  int
-	sectionScroll int
+	store            *storage.Storage
+	projects         []string
+	projectIndex     int
+	project          *models.Project
+	moduleIndex      int
+	tasks            []taskItem
+	taskIndex        int
+	focus            int
+	form             *inputForm
+	confirmation     *confirmation
+	message          string
+	isError          bool
+	showHelp         bool
+	width            int
+	height           int
+	section          int
+	sprintIndex      int
+	reportIndex      int
+	backupIndex      int
+	detailScroll     int
+	sectionScroll    int
+	selectedTasks    map[string]bool
+	selectionProject string
 }
 
 type tickMsg time.Time
@@ -93,7 +96,7 @@ const (
 
 // Run starts the full-screen QIX interface. initialProject may be empty.
 func Run(store *storage.Storage, initialProject string) error {
-	a := &app{store: store, moduleIndex: -1, width: 100, height: 30}
+	a := &app{store: store, moduleIndex: -1, width: 100, height: 30, selectedTasks: make(map[string]bool)}
 	if err := a.loadProjects(initialProject); err != nil {
 		return err
 	}
@@ -249,6 +252,12 @@ func (a *app) loadProject() error {
 		return fmt.Errorf("load project %q: %w", a.projects[a.projectIndex], err)
 	}
 	a.project = project
+	if a.selectionProject != project.Name {
+		a.selectedTasks = make(map[string]bool)
+		a.selectionProject = project.Name
+	} else {
+		a.pruneTaskSelection()
+	}
 	if a.moduleIndex >= len(project.Modules) {
 		a.moduleIndex = len(project.Modules) - 1
 	}
@@ -312,6 +321,11 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	}
 	if key.name == "esc" && a.showHelp {
 		a.showHelp = false
+		return false, nil
+	}
+	if key.name == "esc" && a.selectedTaskCount() > 0 {
+		a.clearTaskSelection()
+		a.message = "Task selection cleared"
 		return false, nil
 	}
 	if key.r == 'q' {
@@ -408,11 +422,15 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 		if len(a.tasks) == 0 {
 			return false, nil
 		}
-		task := a.tasks[a.taskIndex].task
+		taskIDs := a.actionTaskIDs()
+		prompt := fmt.Sprintf("Delete %s [%s]?", a.tasks[a.taskIndex].task.Title, a.tasks[a.taskIndex].task.ID)
+		if len(taskIDs) > 1 || a.selectedTaskCount() > 0 {
+			prompt = fmt.Sprintf("Delete %d selected task(s)?", len(taskIDs))
+		}
 		a.confirmation = &confirmation{
-			kind:     "delete-task",
-			prompt:   fmt.Sprintf("Delete %s [%s]? Type the task ID", task.Title, task.ID),
-			expected: task.ID,
+			kind:    "delete-task",
+			prompt:  prompt + " Parent, dependency, and sprint references will be cleaned.",
+			taskIDs: taskIDs,
 		}
 	case key.r == 'l' && a.focus == 2:
 		return false, a.startTaskRelationForm("parent")
@@ -428,7 +446,11 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 		return false, a.startTimeLogForm()
 	case key.r == 'o' && a.focus == 2:
 		return false, a.openSelectedJira()
-	case key.name == "space" || key.r == 'x':
+	case key.name == "space" && a.focus == 2:
+		return false, a.toggleTaskSelection()
+	case key.r == 'a' && a.focus == 2:
+		return false, a.toggleAllVisibleTasks()
+	case key.r == 'x':
 		return false, a.cycleStatus()
 	case key.r >= '1' && key.r <= '4':
 		statuses := []models.TaskStatus{models.StatusTodo, models.StatusDoing, models.StatusDone, models.StatusBlocked}
@@ -915,7 +937,7 @@ func (a *app) updateConfirmation(key keyEvent) error {
 			confirm.input = confirm.input[:len(confirm.input)-1]
 		}
 	case "enter":
-		if strings.TrimSpace(string(confirm.input)) != confirm.expected {
+		if confirm.expected != "" && strings.TrimSpace(string(confirm.input)) != confirm.expected {
 			return fmt.Errorf("confirmation does not match %q", confirm.expected)
 		}
 		if confirm.kind == "delete-project" {
@@ -946,16 +968,17 @@ func (a *app) updateConfirmation(key keyEvent) error {
 			a.message = "Removed module " + moduleName
 		}
 		if confirm.kind == "delete-task" {
-			taskID := confirm.expected
-			if err := a.store.RemoveTask(a.project.Name, taskID); err != nil {
+			count, err := a.store.RemoveTasks(a.project.Name, confirm.taskIDs)
+			if err != nil {
 				return err
 			}
 			a.confirmation = nil
+			a.clearTaskSelection()
 			if err := a.loadProject(); err != nil {
 				return err
 			}
 			a.focus = 2
-			a.message = "Removed task " + taskID
+			a.message = fmt.Sprintf("Removed %d task(s)", count)
 		}
 		if confirm.kind == "delete-sprint" {
 			name := confirm.expected
@@ -1116,15 +1139,105 @@ func (a *app) setStatus(status models.TaskStatus) error {
 	if len(a.tasks) == 0 || a.focus != 2 {
 		return nil
 	}
-	item := a.tasks[a.taskIndex]
-	if err := a.store.UpdateTaskStatus(a.projects[a.projectIndex], item.task.ID, status); err != nil {
+	ids := a.actionTaskIDs()
+	count, err := a.store.UpdateTasksStatus(a.projects[a.projectIndex], ids, status)
+	if err != nil {
 		return err
 	}
+	wasBulk := a.selectedTaskCount() > 0
+	a.clearTaskSelection()
 	if err := a.loadProject(); err != nil {
 		return err
 	}
-	a.message = fmt.Sprintf("Task %s moved to %s", item.task.ID, status)
+	if wasBulk {
+		a.message = fmt.Sprintf("Moved %d selected task(s) to %s", count, status)
+	} else {
+		a.message = fmt.Sprintf("Task %s moved to %s", ids[0], status)
+	}
 	return nil
+}
+
+func (a *app) toggleTaskSelection() error {
+	if len(a.tasks) == 0 {
+		return nil
+	}
+	a.ensureTaskSelection()
+	id := a.tasks[a.taskIndex].task.ID
+	if a.selectedTasks[id] {
+		delete(a.selectedTasks, id)
+	} else {
+		a.selectedTasks[id] = true
+	}
+	a.message = fmt.Sprintf("%d task(s) selected", a.selectedTaskCount())
+	return nil
+}
+
+func (a *app) toggleAllVisibleTasks() error {
+	if len(a.tasks) == 0 {
+		return nil
+	}
+	a.ensureTaskSelection()
+	allSelected := true
+	for _, item := range a.tasks {
+		if !a.selectedTasks[item.task.ID] {
+			allSelected = false
+			break
+		}
+	}
+	for _, item := range a.tasks {
+		if allSelected {
+			delete(a.selectedTasks, item.task.ID)
+		} else {
+			a.selectedTasks[item.task.ID] = true
+		}
+	}
+	a.message = fmt.Sprintf("%d task(s) selected", a.selectedTaskCount())
+	return nil
+}
+
+func (a *app) actionTaskIDs() []string {
+	if a.selectedTaskCount() == 0 {
+		if len(a.tasks) == 0 {
+			return nil
+		}
+		return []string{a.tasks[a.taskIndex].task.ID}
+	}
+	ids := make([]string, 0, len(a.selectedTasks))
+	for _, task := range a.project.GetAllTasks() {
+		if a.selectedTasks[task.ID] {
+			ids = append(ids, task.ID)
+		}
+	}
+	return ids
+}
+
+func (a *app) ensureTaskSelection() {
+	if a.selectedTasks == nil {
+		a.selectedTasks = make(map[string]bool)
+	}
+}
+
+func (a *app) selectedTaskCount() int {
+	return len(a.selectedTasks)
+}
+
+func (a *app) clearTaskSelection() {
+	a.selectedTasks = make(map[string]bool)
+}
+
+func (a *app) pruneTaskSelection() {
+	if len(a.selectedTasks) == 0 || a.project == nil {
+		return
+	}
+	valid := make(map[string]bool)
+	for _, task := range a.project.GetAllTasks() {
+		valid[task.ID] = true
+	}
+	for id := range a.selectedTasks {
+		if !valid[id] {
+			delete(a.selectedTasks, id)
+		}
+	}
 }
 
 func (a *app) view(width, height int) string {
@@ -1177,12 +1290,16 @@ func (a *app) view(width, height int) string {
 		taskLines = append(taskLines, "  No tasks", "", "  Press n to create one")
 	}
 	if len(a.tasks) > 0 {
-		header := fmt.Sprintf("  %-7s %-8s %s", "STATUS", "ID", "TITLE")
+		header := fmt.Sprintf("  %-3s %-7s %-8s %s", "SEL", "STATUS", "ID", "TITLE")
 		taskLines = append(taskLines, tableHeader(header, mainWidth-2))
 		start, end := visibleRange(len(a.tasks), a.taskIndex, taskHeight-3)
 		for i := start; i < end; i++ {
 			item := a.tasks[i]
-			content := fmt.Sprintf("  %-7s %-8s %s", item.task.Status, item.task.ID, item.task.Title)
+			mark := "[ ]"
+			if a.selectedTasks[item.task.ID] {
+				mark = "[x]"
+			}
+			content := fmt.Sprintf("  %-3s %-7s %-8s %s", mark, item.task.Status, item.task.ID, item.task.Title)
 			taskLines = append(taskLines, tableRow(content, mainWidth-2, i, i == a.taskIndex, statusColor(item.task.Status)))
 		}
 	}
@@ -1203,6 +1320,9 @@ func (a *app) view(width, height int) string {
 		taskTitle = "Tasks • " + a.project.Modules[a.moduleIndex].Name
 	}
 	taskTitle = scrollTitle(taskTitle, a.taskIndex, len(a.tasks))
+	if count := a.selectedTaskCount(); count > 0 {
+		taskTitle += fmt.Sprintf(" • %d selected", count)
+	}
 	detailTitle := scrollOffsetTitle("Details", a.detailScroll, len(allDetails), detailHeight-2)
 	topRight := box(taskTitle, taskLines, mainWidth, taskHeight, a.focus == 2)
 	bottomRight := box(detailTitle, details, mainWidth, detailHeight, a.focus == 3)
@@ -1219,7 +1339,7 @@ func (a *app) view(width, height int) string {
 	for i := 0; i < contentHeight; i++ {
 		b.WriteString(left[i] + " " + right[i] + "\n")
 	}
-	b.WriteString(dim + fit(" ↑/↓ scroll  pgup/pgdn page  home/end jump  tab focus  p/m/n add  e edit  d remove  ? help", width) + reset + "\n")
+	b.WriteString(dim + fit(" ↑/↓ move  space mark  a all  1-4 status  d delete  esc clear  tab focus  ? help", width) + reset + "\n")
 	footer := a.message
 	color := green
 	if a.isError {
@@ -1264,10 +1384,14 @@ func (a *app) modalView(base string, width, height int) string {
 		hint = "↑/↓ or tab select  •  enter next/save  •  ctrl-s save  •  esc cancel"
 	} else {
 		title = "Confirm destructive action"
-		content = a.confirmation.prompt + "\n" +
-			lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).MarginTop(1).
+		content = a.confirmation.prompt
+		if a.confirmation.expected != "" {
+			content += "\n" + lipgloss.NewStyle().Width(modalWidth-4).Padding(0, 1).MarginTop(1).
 				Background(lipgloss.Color("238")).Foreground(lipgloss.Color("229")).Render(string(a.confirmation.input)+"█")
-		hint = "type the exact value, then enter  •  esc cancels"
+			hint = "type the exact value, then enter  •  esc cancels"
+		} else {
+			hint = "enter confirms  •  esc cancels"
+		}
 	}
 	if a.isError && a.message != "" {
 		hint = red + a.message + reset + "\n" + hint
@@ -1294,7 +1418,8 @@ func (a *app) detailLines() []string {
 			"p: new project    m: new module    n: new task",
 			"e: edit selected item    d: remove selected item",
 			"r: refresh from disk",
-			"space/x: cycle status    1-4: set status",
+			"space: mark task    a: mark/unmark visible tasks    esc: clear marks",
+			"x: cycle status    1-4: set status for marked/current task",
 			"l: set parent    y: add dependency    c/u: set/remove recurrence",
 			"C: complete task    t: log time    o: open Jira issue",
 			"1 todo  2 doing  3 done  4 blocked",
