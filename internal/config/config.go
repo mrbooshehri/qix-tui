@@ -66,8 +66,6 @@ func Init() error {
 	viper.BindEnv("log_level", "QIX_LOG_LEVEL")
 	viper.SetDefault("log_file", filepath.Join(qixDir, "qix.log"))
 	viper.BindEnv("log_file", "QIX_LOG_FILE")
-	viper.SetDefault("QIX_LOG_LEVEL", "info")
-	viper.SetDefault("QIX_LOG_FILE", filepath.Join(qixDir, "qix.log"))
 
 	// Try to read config file
 	if err := viper.ReadInConfig(); err != nil {
@@ -90,12 +88,10 @@ func Init() error {
 		ColorOutput:         viper.GetBool("color_output"),
 		JiraBaseURL:         viper.GetString("jira_base_url"),
 		LogFile: firstNonEmpty(
-			viper.GetString("QIX_LOG_FILE"),
 			viper.GetString("log_file"),
 			filepath.Join(qixDir, "qix.log"),
 		),
 		LogLevel: firstNonEmpty(
-			viper.GetString("QIX_LOG_LEVEL"),
 			viper.GetString("log_level"),
 			"info",
 		),

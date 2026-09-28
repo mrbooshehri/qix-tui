@@ -13,6 +13,8 @@ QIX keeps projects, modules, tasks, sprints, time entries, and reports close to 
 - Centered, scrollable modal forms that keep the workspace visible behind them
 - Multi-select task actions for bulk status changes and deletion
 - Fast task-status workflow: `todo`, `doing`, `done`, and `blocked`
+- Dashboard-style tracking, sprint, and report screens with tables and terminal charts
+- In-app settings editor for Jira, date formats, backups, colors, and logging
 - Hierarchical projects with modules and project-level tasks
 - Priorities, tags, dependencies, parent/child links, recurrence, and Jira links
 - Start/stop time tracking and manual time entry
@@ -87,7 +89,7 @@ qix tui --project launch
 
 ### Keyboard controls
 
-The top navigation exposes five screens. Use uppercase `W`, `T`, `S`, `R`, and `H` from anywhere outside a modal.
+The top navigation exposes six screens. Use uppercase `W`, `T`, `S`, `R`, `H`, and `G` from anywhere outside a modal.
 
 | Key | Screen |
 | --- | --- |
@@ -96,6 +98,7 @@ The top navigation exposes five screens. Use uppercase `W`, `T`, `S`, `R`, and `
 | `S` | Sprint planning and progress |
 | `R` | Overview, daily, WBS, timeline, and comparison reports |
 | `H` | Doctor checks and backup management |
+| `G` | View and edit QIX settings and storage paths |
 
 Workspace controls:
 
@@ -135,10 +138,11 @@ Screen-specific controls:
 
 | Screen | Controls |
 | --- | --- |
-| Tracking | `s` start/switch to the Workspace-selected task, `x` stop, `t` manually log time |
-| Sprints | `↑`/`↓` select, `n` create, `e` edit, `a` assign selected task, `u` unassign, `d` remove |
-| Reports | `←`/`→` cycle reports; `↑`/`↓` or `Page Up`/`Page Down` scroll vertically |
+| Tracking | Active timer, seven-day hours chart, today-by-project table; `s` start/switch, `x` stop, `t` manually log time |
+| Sprints | Lifecycle and progress table, status charts, selected-sprint task table; `↑`/`↓` select, `n` create, `e` edit, `a` assign, `u` unassign, `d` remove |
+| Reports | Scorecards, status/time charts, WBS/activity/portfolio tables; `←`/`→` cycle reports and `↑`/`↓` or `Page Up`/`Page Down` scroll |
 | Health | `↑`/`↓` select backup, `Page Up`/`Page Down` scroll, `b` create, `e` export, `o` restore, `c` clean expired backups |
+| Settings | `e` or `Enter` edits Jira URL, date formats, backup retention, color output, log level, and log file; `r` reloads from disk |
 
 The TUI is built with Bubble Tea `v1.2.4` and Lip Gloss `v1.0.0`, versions selected to retain the repository's Go 1.21 compatibility.
 

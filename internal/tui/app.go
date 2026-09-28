@@ -92,6 +92,7 @@ const (
 	sectionSprints
 	sectionReports
 	sectionHealth
+	sectionSettings
 )
 
 // Run starts the full-screen QIX interface. initialProject may be empty.
@@ -316,6 +317,10 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 		return false, nil
 	case 'H':
 		a.section = sectionHealth
+		a.sectionScroll = 0
+		return false, nil
+	case 'G':
+		a.section = sectionSettings
 		a.sectionScroll = 0
 		return false, nil
 	}
@@ -661,6 +666,9 @@ func (a *app) updateForm(key keyEvent) error {
 
 func (a *app) submitForm() error {
 	form := a.form
+	if form.kind == "settings" {
+		return a.submitSettings(form)
+	}
 	if form.kind == "project" {
 		name := strings.TrimSpace(string(form.fields[0].value))
 		description := strings.TrimSpace(string(form.fields[1].value))

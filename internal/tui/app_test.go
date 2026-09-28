@@ -408,6 +408,108 @@ func TestDetailPaneScrollsVertically(t *testing.T) {
 	}
 }
 
+func TestDashboardSectionsRenderTablesChartsAndConsistentFooters(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	if err := config.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := storage.Init(); err != nil {
+		t.Fatal(err)
+	}
+	store := storage.Get()
+	project, err := store.CreateProject("launch", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	project.Tasks = []models.Task{
+		{ID: "one", Title: "Build", Status: models.StatusDoing, Priority: models.PriorityHigh, EstimatedHours: 4, UpdatedAt: now, TimeEntries: []models.TimeEntry{{Date: now.Format("2006-01-02"), Hours: 1.5}}},
+		{ID: "two", Title: "Ship", Status: models.StatusDone, Priority: models.PriorityMedium, EstimatedHours: 2, UpdatedAt: now.Add(-time.Hour)},
+	}
+	project.Modules = []models.Module{{Name: "api", Tasks: []models.Task{{ID: "three", Title: "Test", Status: models.StatusBlocked, Priority: models.PriorityHigh}}}}
+	project.Sprints = []models.Sprint{{Name: "release", StartDate: now.AddDate(0, 0, -1).Format("2006-01-02"), EndDate: now.AddDate(0, 0, 5).Format("2006-01-02"), TaskIDs: []string{"one", "two", "three"}}}
+	if err := store.SaveProject("launch", project); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{store: store, moduleIndex: -1, width: 120, height: 32}
+	if err := a.loadProjects("launch"); err != nil {
+		t.Fatal(err)
+	}
+	for name, view := range map[string]string{
+		"tracking": strings.Join(a.trackingLines(), "\n"),
+		"sprints":  strings.Join(a.sprintLines(), "\n"),
+		"overview": strings.Join(a.reportLines(), "\n"),
+	} {
+		plain := stripANSI(view)
+		for _, expected := range map[string][]string{
+			"tracking": {"LAST 7 DAYS", "TODAY BY PROJECT", "READY TO TRACK", "█"},
+			"sprints":  {"SELECTED SPRINT", "STATUS", "EST", "ACTUAL", "█"},
+			"overview": {"PROJECT SCORECARD", "STATUS DISTRIBUTION", "MODULE PERFORMANCE", "█"},
+		}[name] {
+			if !strings.Contains(plain, expected) {
+				t.Errorf("%s dashboard missing %q:\n%s", name, expected, plain)
+			}
+		}
+	}
+	for index, expected := range []string{"PROJECT SCORECARD", "TIME TREND", "WORK BREAKDOWN STRUCTURE", "RECENT TASK ACTIVITY", "PORTFOLIO COMPARISON"} {
+		a.reportIndex = index
+		if report := stripANSI(strings.Join(a.reportLines(), "\n")); !strings.Contains(report, expected) {
+			t.Errorf("report %d missing %q:\n%s", index, expected, report)
+		}
+	}
+	a.reportIndex = 0
+
+	for _, section := range []int{sectionWorkspace, sectionTracking, sectionSprints, sectionReports, sectionHealth, sectionSettings} {
+		a.section = section
+		view := a.View()
+		lines := strings.Split(view, "\n")
+		if len(lines) != a.height {
+			t.Errorf("section %d rendered %d lines, want %d", section, len(lines), a.height)
+		}
+		if section != sectionWorkspace {
+			hint := lines[len(lines)-2]
+			if !strings.Contains(hint, dim) || strings.Contains(hint, green) {
+				t.Errorf("section %d hint styling is not dim: %q", section, hint)
+			}
+		}
+	}
+}
+
+func TestSettingsFormPersistsValues(t *testing.T) {
+	t.Setenv("QIX_DIR", t.TempDir())
+	t.Setenv("JIRA_BASE_URL", "")
+	t.Setenv("QIX_LOG_LEVEL", "")
+	t.Setenv("QIX_LOG_FILE", "")
+	if err := config.Init(); err != nil {
+		t.Fatal(err)
+	}
+	a := &app{width: 110, height: 30}
+	a.startSettingsForm()
+	values := []string{"https://jira.example.com/browse", "2006-01-02", "2006-01-02 15:04", "21", "false", "warn", config.Get().QixDir + "/qix-custom.log"}
+	for i, value := range values {
+		a.form.fields[i].value = []rune(value)
+	}
+	if err := a.submitForm(); err != nil {
+		t.Fatalf("submit settings: %v", err)
+	}
+	cfg := config.Get()
+	if cfg.JiraBaseURL != values[0] || cfg.BackupRetentionDays != 21 || cfg.ColorOutput || cfg.LogLevel != "warn" {
+		t.Fatalf("saved settings = %#v", cfg)
+	}
+	a.section = sectionSettings
+	plain := stripANSI(a.View())
+	for _, expected := range []string{"SETTINGS", "Jira base URL", values[0], "STORAGE PATHS"} {
+		if !strings.Contains(plain, expected) {
+			t.Errorf("settings view missing %q:\n%s", expected, plain)
+		}
+	}
+	navigation := stripANSI(a.navigation(110, "SETTINGS"))
+	if !strings.Contains(navigation, "[G Settings]") || strings.Contains(navigation, "[S Sprints]") {
+		t.Fatalf("settings navigation selection is ambiguous: %s", navigation)
+	}
+}
+
 func TestRecurrenceParsing(t *testing.T) {
 	now := time.Date(2026, time.September, 28, 12, 0, 0, 0, time.UTC) // Monday
 	recurrence, err := parseRecurrence("weekly:friday", now)
