@@ -92,7 +92,8 @@ qix tui --project launch
 | `↑` / `↓`, `j` / `k` | Move through the focused list |
 | `Tab`, `←` / `→` | Change the focused pane |
 | `n` | Create a task in the selected project |
-| `p` | Create a project |
+| `p` | Create a project with a name, description, and tags |
+| `d` | Delete the selected project after name confirmation |
 | `Space` or `x` | Cycle the selected task's status |
 | `1` / `2` / `3` / `4` | Set `todo` / `doing` / `done` / `blocked` |
 | `r` | Reload projects and tasks from disk |
@@ -101,7 +102,7 @@ qix tui --project launch
 | `Enter` | Submit inline input |
 | `Ctrl-G` | Cancel inline input |
 
-The TUI creates tasks at the project level. Use `qix task create PROJECT/MODULE ...` when a task should belong to a module.
+With the project pane focused, the details panel shows the selected project's description, tags, modules, sprints, status counts, estimated and actual hours, and completion percentage. The TUI creates tasks at the project level; use `qix task create PROJECT/MODULE ...` when a task should belong to a module.
 
 ## CLI
 

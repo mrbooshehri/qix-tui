@@ -153,6 +153,26 @@ type taskItem struct {
 	location string
 }
 
+type inputField struct {
+	label    string
+	value    []rune
+	required bool
+}
+
+type inputForm struct {
+	kind   string
+	title  string
+	fields []inputField
+	index  int
+}
+
+type confirmation struct {
+	kind     string
+	prompt   string
+	expected string
+	input    []rune
+}
+
 type app struct {
 	store        *storage.Storage
 	projects     []string
@@ -161,8 +181,8 @@ type app struct {
 	tasks        []taskItem
 	taskIndex    int
 	focus        int
-	mode         string
-	input        []rune
+	form         *inputForm
+	confirmation *confirmation
 	message      string
 	isError      bool
 	showHelp     bool
@@ -249,8 +269,13 @@ func (a *app) update(key keyEvent) (bool, error) {
 	if key.name == "ctrl-c" {
 		return true, nil
 	}
-	if a.mode != "" {
-		return false, a.updateInput(key)
+	if a.form != nil {
+		a.message, a.isError = "", false
+		return false, a.updateForm(key)
+	}
+	if a.confirmation != nil {
+		a.message, a.isError = "", false
+		return false, a.updateConfirmation(key)
 	}
 	if key.name == "esc" && a.showHelp {
 		a.showHelp = false
@@ -286,12 +311,21 @@ func (a *app) update(key keyEvent) (bool, error) {
 		}
 		a.message = "Data refreshed"
 	case key.r == 'p':
-		a.mode, a.input = "project", nil
+		a.startProjectForm()
 	case key.r == 'n':
 		if a.project == nil {
 			return false, fmt.Errorf("create a project first with p")
 		}
-		a.mode, a.input = "task", nil
+		a.startTaskForm()
+	case key.r == 'd' && a.focus == 0:
+		if a.project == nil {
+			return false, nil
+		}
+		a.confirmation = &confirmation{
+			kind:     "delete-project",
+			prompt:   fmt.Sprintf("Delete %s and all its data? Type the project name", a.project.Name),
+			expected: a.project.Name,
+		}
 	case key.name == "space" || key.r == 'x':
 		return false, a.cycleStatus()
 	case key.r >= '1' && key.r <= '4':
@@ -301,43 +335,115 @@ func (a *app) update(key keyEvent) (bool, error) {
 	return false, nil
 }
 
-func (a *app) updateInput(key keyEvent) error {
+func (a *app) startProjectForm() {
+	a.form = &inputForm{
+		kind:  "project",
+		title: "Create project",
+		fields: []inputField{
+			{label: "Name", required: true},
+			{label: "Description"},
+			{label: "Tags (comma-separated)"},
+		},
+	}
+}
+
+func (a *app) startTaskForm() {
+	a.form = &inputForm{
+		kind:  "task",
+		title: "Create project-level task",
+		fields: []inputField{
+			{label: "Title", required: true},
+		},
+	}
+}
+
+func (a *app) updateForm(key keyEvent) error {
+	field := &a.form.fields[a.form.index]
 	switch key.name {
 	case "esc", "cancel":
-		a.mode, a.input = "", nil
+		a.form = nil
 	case "backspace":
-		if len(a.input) > 0 {
-			a.input = a.input[:len(a.input)-1]
+		if len(field.value) > 0 {
+			field.value = field.value[:len(field.value)-1]
 		}
 	case "enter":
-		value := strings.TrimSpace(string(a.input))
-		if value == "" {
-			return fmt.Errorf("name cannot be empty")
+		if field.required && strings.TrimSpace(string(field.value)) == "" {
+			return fmt.Errorf("%s cannot be empty", strings.ToLower(field.label))
 		}
-		mode := a.mode
-		a.mode, a.input = "", nil
-		if mode == "project" {
-			if _, err := a.store.CreateProject(value, "", nil); err != nil {
-				return err
-			}
-			if err := a.loadProjects(value); err != nil {
-				return err
-			}
-			a.message = "Created project " + value
+		if a.form.index < len(a.form.fields)-1 {
+			a.form.index++
 			return nil
 		}
-		if err := a.store.AddTask(a.projects[a.projectIndex], "", models.Task{Title: value}); err != nil {
-			return err
-		}
-		if err := a.loadProject(); err != nil {
-			return err
-		}
-		a.taskIndex = len(a.tasks) - 1
-		a.focus = 1
-		a.message = "Created task " + value
+		return a.submitForm()
 	default:
 		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
-			a.input = append(a.input, key.r)
+			field.value = append(field.value, key.r)
+		}
+	}
+	return nil
+}
+
+func (a *app) submitForm() error {
+	form := a.form
+	if form.kind == "project" {
+		name := strings.TrimSpace(string(form.fields[0].value))
+		description := strings.TrimSpace(string(form.fields[1].value))
+		tags := splitCommaSeparated(string(form.fields[2].value))
+		if _, err := a.store.CreateProject(name, description, tags); err != nil {
+			return err
+		}
+		a.form = nil
+		if err := a.loadProjects(name); err != nil {
+			return err
+		}
+		a.focus = 0
+		a.message = "Created project " + name
+		return nil
+	}
+
+	title := strings.TrimSpace(string(form.fields[0].value))
+	if err := a.store.AddTask(a.projects[a.projectIndex], "", models.Task{Title: title}); err != nil {
+		return err
+	}
+	a.form = nil
+	if err := a.loadProject(); err != nil {
+		return err
+	}
+	a.taskIndex = len(a.tasks) - 1
+	a.focus = 1
+	a.message = "Created task " + title
+	return nil
+}
+
+func (a *app) updateConfirmation(key keyEvent) error {
+	confirm := a.confirmation
+	switch key.name {
+	case "esc", "cancel":
+		a.confirmation = nil
+		a.message = "Deletion cancelled"
+	case "backspace":
+		if len(confirm.input) > 0 {
+			confirm.input = confirm.input[:len(confirm.input)-1]
+		}
+	case "enter":
+		if strings.TrimSpace(string(confirm.input)) != confirm.expected {
+			return fmt.Errorf("confirmation does not match %q", confirm.expected)
+		}
+		if confirm.kind == "delete-project" {
+			name := confirm.expected
+			if err := a.store.DeleteProject(name); err != nil {
+				return err
+			}
+			a.confirmation = nil
+			if err := a.loadProjects(""); err != nil {
+				return err
+			}
+			a.focus = 0
+			a.message = "Deleted project " + name
+		}
+	default:
+		if key.r >= 32 && utf8.RuneLen(key.r) > 0 {
+			confirm.input = append(confirm.input, key.r)
 		}
 	}
 	return nil
@@ -448,19 +554,28 @@ func (a *app) view(width, height int) string {
 	for i := 0; i < contentHeight; i++ {
 		b.WriteString(left[i] + " " + right[i] + "\r\n")
 	}
-	b.WriteString(dim + fit(" ↑/↓ or j/k move  tab/←/→ focus  n new task  p new project  space status  r refresh  ? help  q quit", width) + reset + "\r\n")
+	b.WriteString(dim + fit(" ↑/↓ move  tab/←/→ focus  p new project  d delete project  n new task  space status  ? help  q quit", width) + reset + "\r\n")
 	footer := a.message
 	color := green
 	if a.isError {
 		color = red
 	}
-	if a.mode != "" {
-		label := "New task title"
-		if a.mode == "project" {
-			label = "New project name"
-		}
-		footer = label + ": " + string(a.input) + "_  (enter save, ctrl-g cancel)"
+	if a.form != nil {
+		field := a.form.fields[a.form.index]
+		footer = fmt.Sprintf("%s [%d/%d] • %s: %s_  (enter next/save, ctrl-g cancel)", a.form.title, a.form.index+1, len(a.form.fields), field.label, string(field.value))
 		color = yellow
+		if a.isError {
+			footer = a.message + " • " + footer
+			color = red
+		}
+	}
+	if a.confirmation != nil {
+		footer = a.confirmation.prompt + ": " + string(a.confirmation.input) + "_  (enter confirm, ctrl-g cancel)"
+		color = yellow
+		if a.isError {
+			footer = a.message + " • " + footer
+			color = red
+		}
 	}
 	b.WriteString(color + fit(" "+footer, width) + reset)
 	return b.String()
@@ -470,11 +585,15 @@ func (a *app) detailLines() []string {
 	if a.showHelp {
 		return []string{
 			"Navigation: arrows or j/k; tab changes pane",
-			"n: new task    p: new project    r: refresh",
+			"p: new project    d: delete selected project",
+			"n: new task       r: refresh from disk",
 			"space/x: cycle status    1-4: set status",
 			"1 todo  2 doing  3 done  4 blocked",
 			"?: close help    q: quit",
 		}
+	}
+	if a.focus == 0 {
+		return a.projectDetailLines()
 	}
 	if len(a.tasks) == 0 {
 		return []string{"Select a task to see its details."}
@@ -491,6 +610,38 @@ func (a *app) detailLines() []string {
 	}
 	if len(task.Tags) > 0 {
 		lines = append(lines, "Tags: "+strings.Join(task.Tags, ", "))
+	}
+	return lines
+}
+
+func (a *app) projectDetailLines() []string {
+	if a.project == nil {
+		return []string{"Create a project with p to get started."}
+	}
+	project := a.project
+	counts := project.CountByStatus()
+	lines := []string{
+		bold + project.Name + reset,
+		fmt.Sprintf("Tasks: %d    Modules: %d    Sprints: %d", len(project.GetAllTasks()), len(project.Modules), len(project.Sprints)),
+		fmt.Sprintf("Todo: %d    Doing: %d    Done: %d    Blocked: %d", counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
+		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", project.CalculateTotalEstimated(), project.CalculateTotalActual()),
+		fmt.Sprintf("Completion: %s %.1f%%", progressBar(project.GetCompletionPercentage(), 20), project.GetCompletionPercentage()),
+	}
+	if project.Description != "" {
+		lines = append(lines, "Description: "+project.Description)
+	}
+	if len(project.Tags) > 0 {
+		lines = append(lines, "Tags: "+strings.Join(project.Tags, ", "))
+	}
+	if !project.CreatedAt.IsZero() {
+		lines = append(lines, "Created: "+project.CreatedAt.Format("2006-01-02 15:04"))
+	}
+	if len(project.Modules) > 0 {
+		names := make([]string, 0, len(project.Modules))
+		for _, module := range project.Modules {
+			names = append(names, module.Name)
+		}
+		lines = append(lines, "Modules: "+strings.Join(names, ", "))
 	}
 	return lines
 }
@@ -548,6 +699,24 @@ func stripANSI(s string) string {
 }
 
 func runeCount(s string) int { return utf8.RuneCountInString(s) }
+
+func splitCommaSeparated(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
+}
+
+func progressBar(percent float64, width int) string {
+	percent = float64(clamp(int(percent+0.5), 0, 100))
+	filled := int(percent / 100 * float64(width))
+	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
+}
 
 func visibleWindow(lines []string, selected, height int) []string {
 	if height <= 0 || len(lines) <= height {
