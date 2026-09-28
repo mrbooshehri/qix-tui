@@ -7,6 +7,7 @@ import (
 	"github.com/mrbooshehri/qix-go/internal/config"
 	"github.com/mrbooshehri/qix-go/internal/logging"
 	"github.com/mrbooshehri/qix-go/internal/storage"
+	"github.com/mrbooshehri/qix-go/internal/tui"
 	"github.com/mrbooshehri/qix-go/internal/ui"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,10 @@ var (
 var rootCmd = &cobra.Command{
 	Use:   "qix",
 	Short: "QIX - Quick Insight X: Work Breakdown Structure & KPI Tracker",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return tui.Run(storage.Get(), "")
+	},
 	Long: `QIX is a powerful project management tool that helps you:
   • Organize projects into hierarchical modules
   • Track tasks with time estimates and actual hours
@@ -96,6 +101,7 @@ func init() {
 	rootCmd.AddCommand(doctorCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(jiraCmd)
+	rootCmd.AddCommand(tuiCmd)
 }
 
 // versionCmd displays version information

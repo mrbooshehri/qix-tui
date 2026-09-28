@@ -1,0 +1,18 @@
+# Build outputs
+/qix
+/dist/
+*.test
+coverage.out
+
+# Generated analysis
+/graphify-out/
+
+# Local data and logs
+/.qix-data/
+*.log
+
+# Editor and operating-system files
+.DS_Store
+.idea/
+*.swp
+*~

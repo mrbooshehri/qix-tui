@@ -287,7 +287,7 @@ func PrintWBSReport(project *models.Project) {
 	
 	fmt.Printf("Overall Progress: %.1f%% (%d/%d tasks)\n", completion, done, total)
 	PrintProgressBar(completion, 60)
-	fmt.Println("\n")
+	fmt.Print("\n\n")
 	
 	// Project-level tasks
 	if len(project.Tasks) > 0 {
