@@ -1923,7 +1923,7 @@ func parseRecurrence(pattern string, now time.Time) (models.Recurrence, error) {
 func progressBar(percent float64, width int) string {
 	percent = float64(clamp(int(percent+0.5), 0, 100))
 	filled := int(percent / 100 * float64(width))
-	return "[" + strings.Repeat("#", filled) + strings.Repeat("-", width-filled) + "]"
+	return "\x1b[38;5;42m" + strings.Repeat("▰", filled) + reset + dim + strings.Repeat("▱", width-filled) + reset
 }
 
 func clamp(value, low, high int) int {

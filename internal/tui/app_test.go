@@ -55,10 +55,10 @@ func TestProjectDetailLinesIncludeProjectKPIs(t *testing.T) {
 }
 
 func TestProgressBarClampsPercentage(t *testing.T) {
-	if got := progressBar(-20, 5); got != "[-----]" {
+	if got := progressBar(-20, 5); !strings.Contains(got, "▱▱▱▱▱") || strings.Contains(got, "#") {
 		t.Fatalf("negative progress = %q", got)
 	}
-	if got := progressBar(120, 5); got != "[#####]" {
+	if got := progressBar(120, 5); !strings.Contains(got, "▰▰▰▰▰") || strings.Contains(got, "-") {
 		t.Fatalf("overflow progress = %q", got)
 	}
 }
