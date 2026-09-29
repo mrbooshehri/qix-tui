@@ -110,7 +110,7 @@ Workspace controls:
 | `n` | Create a task in the selected project or module |
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |
-| `e` | Edit the focused project, module, or task |
+| `e` | Edit the focused project, module, or task (including a task's actual hours) |
 | `Space` | Mark or unmark the focused task for bulk actions |
 | `a` | Mark or unmark every task in the visible project/module scope |
 | `d` | Delete marked tasks (or the focused item); task deletion uses Enter/Esc confirmation |
@@ -146,7 +146,7 @@ Screen-specific controls:
 | Health | `↑`/`↓` select backup, `Page Up`/`Page Down` scroll, `b` create, `e` export, `o` restore, `c` clean expired backups |
 | Settings | `e` or `Enter` edits Jira URL, date formats, backup retention, color output, log level, and log file; `r` reloads from disk |
 
-The TUI is built with Bubble Tea `v1.2.4` and Lip Gloss `v1.0.0`, versions selected to retain the repository's Go 1.21 compatibility.
+The TUI is built with Bubble Tea `v1.2.4` and Lip Gloss `v1.0.0`, versions selected to retain the repository's Go 1.21 compatibility. Editing a task's actual hours reconciles its time-entry log, trimming the newest entries first or adding a dated correction entry.
 
 ## CLI
 

@@ -544,6 +544,7 @@ func (a *app) startTaskEditForm() {
 			{label: "Status (todo/doing/done/blocked)", value: []rune(task.Status), required: true},
 			{label: "Priority (low/medium/high)", value: []rune(task.Priority), required: true},
 			{label: "Estimated hours", value: []rune(strconv.FormatFloat(task.EstimatedHours, 'f', -1, 64)), required: true},
+			{label: "Actual hours", value: []rune(strconv.FormatFloat(task.CalculateActualHours(), 'f', -1, 64)), required: true},
 			{label: "Tags (comma-separated)", value: []rune(strings.Join(task.Tags, ", "))},
 			{label: "Jira issue", value: []rune(task.JiraIssue)},
 		},
@@ -891,9 +892,13 @@ func (a *app) submitForm() error {
 	if err != nil || estimated < 0 {
 		return fmt.Errorf("estimated hours must be zero or a positive number")
 	}
-	tags := splitCommaSeparated(string(form.fields[5].value))
-	jira := strings.TrimSpace(string(form.fields[6].value))
 	if form.kind == "edit-task" {
+		actual, parseErr := strconv.ParseFloat(strings.TrimSpace(string(form.fields[5].value)), 64)
+		if parseErr != nil || actual < 0 {
+			return fmt.Errorf("actual hours must be zero or a positive number")
+		}
+		tags := splitCommaSeparated(string(form.fields[6].value))
+		jira := strings.TrimSpace(string(form.fields[7].value))
 		taskID := a.tasks[a.taskIndex].task.ID
 		if err := a.store.UpdateTask(a.project.Name, taskID, func(task *models.Task) error {
 			task.Title = title
@@ -901,6 +906,7 @@ func (a *app) submitForm() error {
 			task.Status = status
 			task.Priority = priority
 			task.EstimatedHours = estimated
+			task.TimeEntries = reconcileActualHours(task.TimeEntries, actual)
 			task.Tags = tags
 			task.JiraIssue = jira
 			return nil
@@ -914,6 +920,8 @@ func (a *app) submitForm() error {
 		a.message = "Updated task " + taskID
 		return nil
 	}
+	tags := splitCommaSeparated(string(form.fields[5].value))
+	jira := strings.TrimSpace(string(form.fields[6].value))
 	moduleName := ""
 	if a.moduleIndex >= 0 {
 		moduleName = a.project.Modules[a.moduleIndex].Name
@@ -932,6 +940,33 @@ func (a *app) submitForm() error {
 	a.focus = 2
 	a.message = "Created task " + title
 	return nil
+}
+
+// reconcileActualHours adjusts the newest time entries first, preserving the
+// historical log while allowing the editable task total to be corrected.
+func reconcileActualHours(entries []models.TimeEntry, target float64) []models.TimeEntry {
+	if target < 0 {
+		target = 0
+	}
+	current := 0.0
+	for _, entry := range entries {
+		current += entry.Hours
+	}
+	if target > current {
+		return append(entries, models.TimeEntry{Date: time.Now().Format("2006-01-02"), Hours: target - current, LoggedAt: time.Now()})
+	}
+	remaining := current - target
+	result := append([]models.TimeEntry(nil), entries...)
+	for i := len(result) - 1; i >= 0 && remaining > 0; i-- {
+		if result[i].Hours <= remaining {
+			remaining -= result[i].Hours
+			result = append(result[:i], result[i+1:]...)
+			continue
+		}
+		result[i].Hours -= remaining
+		remaining = 0
+	}
+	return result
 }
 
 func (a *app) updateConfirmation(key keyEvent) error {

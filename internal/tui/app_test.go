@@ -224,6 +224,7 @@ func TestTaskCreateAndEditWorkflowUsesFullTaskFields(t *testing.T) {
 	a.startTaskEditForm()
 	a.form.fields[0].value = []rune("Build stable API")
 	a.form.fields[2].value = []rune("done")
+	a.form.fields[5].value = []rune("2.25")
 	if err := a.submitForm(); err != nil {
 		t.Fatalf("edit task submitForm() error: %v", err)
 	}
@@ -231,8 +232,19 @@ func TestTaskCreateAndEditWorkflowUsesFullTaskFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FindTask() error: %v", err)
 	}
-	if updated.Title != "Build stable API" || updated.Status != models.StatusDone {
+	if updated.Title != "Build stable API" || updated.Status != models.StatusDone || updated.CalculateActualHours() != 2.25 {
 		t.Fatalf("updated task = %#v", updated)
+	}
+}
+
+func TestReconcileActualHoursAdjustsNewestEntries(t *testing.T) {
+	entries := []models.TimeEntry{{Date: "2026-09-28", Hours: 1}, {Date: "2026-09-29", Hours: 2}}
+	updated := reconcileActualHours(entries, 1.5)
+	if len(updated) != 2 || updated[0].Hours != 1 || updated[1].Hours != 0.5 {
+		t.Fatalf("reconciled entries = %#v", updated)
+	}
+	if increased := reconcileActualHours(updated, 2.25); len(increased) != 3 || increased[2].Hours != 0.75 {
+		t.Fatalf("increased entries = %#v", increased)
 	}
 }
 
