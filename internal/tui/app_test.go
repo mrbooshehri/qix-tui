@@ -63,6 +63,28 @@ func TestProgressBarClampsPercentage(t *testing.T) {
 	}
 }
 
+func TestTaskTableIncludesCreatedAndUpdatedDates(t *testing.T) {
+	task := models.Task{
+		ID:        "abcdef12",
+		Title:     "Build dashboard",
+		Status:    models.StatusDoing,
+		CreatedAt: time.Date(2026, time.September, 28, 10, 0, 0, 0, time.UTC),
+		UpdatedAt: time.Date(2026, time.September, 29, 11, 0, 0, 0, time.UTC),
+	}
+	wide := taskTableHeader(80) + "\n" + taskTableRow("[ ]", task, 80)
+	for _, expected := range []string{"CREATED", "UPDATED", "2026-09-28", "2026-09-29"} {
+		if !strings.Contains(wide, expected) {
+			t.Errorf("wide task table missing %q: %s", expected, wide)
+		}
+	}
+	compact := taskTableHeader(50) + "\n" + taskTableRow("[ ]", task, 50)
+	for _, expected := range []string{"CRTD", "UPDTD", "09-28", "09-29", "DNG"} {
+		if !strings.Contains(compact, expected) {
+			t.Errorf("compact task table missing %q: %s", expected, compact)
+		}
+	}
+}
+
 func TestProjectCreateAndDeleteWorkflow(t *testing.T) {
 	t.Setenv("QIX_DIR", t.TempDir())
 	if err := config.Init(); err != nil {

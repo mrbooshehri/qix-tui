@@ -1298,7 +1298,7 @@ func (a *app) view(width, height int) string {
 		taskLines = append(taskLines, "  No tasks", "", "  Press n to create one")
 	}
 	if len(a.tasks) > 0 {
-		header := fmt.Sprintf("  %-3s %-7s %-8s %s", "SEL", "STATUS", "ID", "TITLE")
+		header := taskTableHeader(mainWidth - 2)
 		taskLines = append(taskLines, tableHeader(header, mainWidth-2))
 		start, end := visibleRange(len(a.tasks), a.taskIndex, taskHeight-3)
 		for i := start; i < end; i++ {
@@ -1307,7 +1307,7 @@ func (a *app) view(width, height int) string {
 			if a.selectedTasks[item.task.ID] {
 				mark = "[x]"
 			}
-			content := fmt.Sprintf("  %-3s %-7s %-8s %s", mark, item.task.Status, item.task.ID, item.task.Title)
+			content := taskTableRow(mark, item.task, mainWidth-2)
 			taskLines = append(taskLines, tableRow(content, mainWidth-2, i, i == a.taskIndex, statusColor(item.task.Status)))
 		}
 	}
@@ -1443,34 +1443,98 @@ func (a *app) detailLines() []string {
 	if len(a.tasks) == 0 {
 		return []string{"Select a task to see its details."}
 	}
-	item := a.tasks[a.taskIndex]
+	return a.taskDetailLines(a.tasks[a.taskIndex])
+}
+
+func (a *app) taskDetailLines(item taskItem) []string {
 	task := item.task
+	actual := task.CalculateActualHours()
+	percent := 0.0
+	if task.EstimatedHours > 0 {
+		percent = actual / task.EstimatedHours * 100
+	}
 	lines := []string{
-		bold + task.Title + reset,
-		fmt.Sprintf("ID: %s    Status: %s    Priority: %s", task.ID, task.Status, task.Priority),
-		fmt.Sprintf("Location: %s    Estimate: %.2fh    Actual: %.2fh", item.location, task.EstimatedHours, task.CalculateActualHours()),
+		bold + task.Title + reset + dim + "  [" + task.ID + "]" + reset,
+		detailHeading("OVERVIEW"),
+		fmt.Sprintf("  Status: %s    Priority: %s    Location: %s", task.Status, task.Priority, item.location),
+		fmt.Sprintf("  Estimate: %.2fh    Actual: %.2fh    Variance: %+.2fh", task.EstimatedHours, actual, actual-task.EstimatedHours),
+		fmt.Sprintf("  Effort: %s %.1f%%", progressBar(percent, 20), percent),
+		detailHeading("DATES"),
+		fmt.Sprintf("  Created: %s    Updated: %s", detailTime(task.CreatedAt), detailTime(task.UpdatedAt)),
 	}
 	if task.Description != "" {
-		lines = append(lines, "Description: "+task.Description)
+		lines = append(lines, detailHeading("DESCRIPTION"))
+		lines = append(lines, wrapDetail("  ", task.Description, a.detailWidth())...)
 	}
-	if len(task.Tags) > 0 {
-		lines = append(lines, "Tags: "+strings.Join(task.Tags, ", "))
-	}
-	if task.ParentID != "" {
-		lines = append(lines, "Parent: "+task.ParentID)
-	}
-	if len(task.Dependencies) > 0 {
-		lines = append(lines, "Depends on: "+strings.Join(task.Dependencies, ", "))
-	}
-	if task.Recurrence != nil && task.Recurrence.Enabled {
-		pattern := string(task.Recurrence.Type)
-		if task.Recurrence.Value != "" {
-			pattern += ":" + task.Recurrence.Value
+	if len(task.Tags) > 0 || task.ParentID != "" || len(task.Dependencies) > 0 {
+		lines = append(lines, detailHeading("RELATIONSHIPS"))
+		if len(task.Tags) > 0 {
+			lines = append(lines, "  Tags: "+strings.Join(task.Tags, ", "))
 		}
-		lines = append(lines, fmt.Sprintf("Recurrence: %s    Next due: %s", pattern, task.Recurrence.NextDue))
+		if task.ParentID != "" {
+			lines = append(lines, "  Parent: "+task.ParentID)
+		}
+		if len(task.Dependencies) > 0 {
+			lines = append(lines, "  Depends on: "+strings.Join(task.Dependencies, ", "))
+		}
 	}
-	if task.JiraIssue != "" {
-		lines = append(lines, "Jira: "+task.JiraIssue)
+	if task.Recurrence != nil && task.Recurrence.Enabled || task.JiraIssue != "" || len(task.TimeEntries) > 0 {
+		lines = append(lines, detailHeading("SCHEDULE & LINKS"))
+		if task.Recurrence != nil && task.Recurrence.Enabled {
+			pattern := string(task.Recurrence.Type)
+			if task.Recurrence.Value != "" {
+				pattern += ":" + task.Recurrence.Value
+			}
+			lines = append(lines, fmt.Sprintf("  Recurrence: %s    Next due: %s", pattern, task.Recurrence.NextDue))
+		}
+		if task.JiraIssue != "" {
+			lines = append(lines, "  Jira: "+task.JiraIssue)
+		}
+		if len(task.TimeEntries) > 0 {
+			lines = append(lines, fmt.Sprintf("  Time log: %d entries", len(task.TimeEntries)))
+		}
+	}
+	return lines
+}
+
+func detailHeading(title string) string {
+	return cyan + bold + "  " + title + reset
+}
+
+func detailTime(value time.Time) string {
+	if value.IsZero() {
+		return "—"
+	}
+	return value.Format("2006-01-02 15:04")
+}
+
+func (a *app) detailWidth() int {
+	width := a.width - clamp(a.width/4, 24, 34) - 5
+	return max(24, width)
+}
+
+func wrapDetail(prefix, text string, width int) []string {
+	width = max(8, width-runeCount(prefix))
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{prefix}
+	}
+	lines := make([]string, 0, len(words)/5+1)
+	line := ""
+	for _, word := range words {
+		if line != "" && runeCount(line)+1+runeCount(word) > width {
+			lines = append(lines, prefix+line)
+			line = word
+			continue
+		}
+		if line == "" {
+			line = word
+		} else {
+			line += " " + word
+		}
+	}
+	if line != "" {
+		lines = append(lines, prefix+line)
 	}
 	return lines
 }
@@ -1480,11 +1544,10 @@ func (a *app) moduleDetailLines() []string {
 		return []string{"Select a project first."}
 	}
 	if a.moduleIndex < 0 {
-		return []string{
-			bold + "Project-level tasks" + reset,
-			"Tasks here belong directly to " + a.project.Name + ".",
-			"Select a module below, or press m to create one.",
-		}
+		counts := a.project.CountByStatus()
+		return []string{bold + "Project-level tasks" + reset, detailHeading("OVERVIEW"),
+			fmt.Sprintf("  Tasks: %d    Todo: %d    Doing: %d    Done: %d    Blocked: %d", len(a.project.Tasks), counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
+			"  These tasks belong directly to " + a.project.Name + ".", "  Select a module below, or press m to create one."}
 	}
 	module := a.project.Modules[a.moduleIndex]
 	counts := map[models.TaskStatus]int{}
@@ -1500,18 +1563,23 @@ func (a *app) moduleDetailLines() []string {
 	}
 	lines := []string{
 		bold + module.Name + reset,
+		detailHeading("OVERVIEW"),
 		fmt.Sprintf("Tasks: %d    Todo: %d    Doing: %d    Done: %d    Blocked: %d", len(module.Tasks), counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
 		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", estimated, actual),
 		fmt.Sprintf("Completion: %s %.1f%%", progressBar(completion, 20), completion),
 	}
 	if module.Description != "" {
+		lines = append(lines, detailHeading("DESCRIPTION"))
 		lines = append(lines, "Description: "+module.Description)
 	}
 	if len(module.Tags) > 0 {
-		lines = append(lines, "Tags: "+strings.Join(module.Tags, ", "))
+		lines = append(lines, detailHeading("LABELS"), "Tags: "+strings.Join(module.Tags, ", "))
 	}
 	if !module.CreatedAt.IsZero() {
-		lines = append(lines, "Created: "+module.CreatedAt.Format("2006-01-02 15:04"))
+		lines = append(lines, detailHeading("ACTIVITY"), "Created: "+detailTime(module.CreatedAt))
+		if updated := latestTaskUpdate(module.Tasks); !updated.IsZero() {
+			lines = append(lines, "Latest task update: "+detailTime(updated))
+		}
 	}
 	return lines
 }
@@ -1524,19 +1592,24 @@ func (a *app) projectDetailLines() []string {
 	counts := project.CountByStatus()
 	lines := []string{
 		bold + project.Name + reset,
+		detailHeading("OVERVIEW"),
 		fmt.Sprintf("Tasks: %d    Modules: %d    Sprints: %d", len(project.GetAllTasks()), len(project.Modules), len(project.Sprints)),
 		fmt.Sprintf("Todo: %d    Doing: %d    Done: %d    Blocked: %d", counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
 		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", project.CalculateTotalEstimated(), project.CalculateTotalActual()),
 		fmt.Sprintf("Completion: %s %.1f%%", progressBar(project.GetCompletionPercentage(), 20), project.GetCompletionPercentage()),
 	}
 	if project.Description != "" {
+		lines = append(lines, detailHeading("DESCRIPTION"))
 		lines = append(lines, "Description: "+project.Description)
 	}
 	if len(project.Tags) > 0 {
-		lines = append(lines, "Tags: "+strings.Join(project.Tags, ", "))
+		lines = append(lines, detailHeading("LABELS"), "Tags: "+strings.Join(project.Tags, ", "))
 	}
 	if !project.CreatedAt.IsZero() {
-		lines = append(lines, "Created: "+project.CreatedAt.Format("2006-01-02 15:04"))
+		lines = append(lines, detailHeading("ACTIVITY"), "Created: "+detailTime(project.CreatedAt))
+		if updated := latestTaskUpdate(project.GetAllTasks()); !updated.IsZero() {
+			lines = append(lines, "Latest task update: "+detailTime(updated))
+		}
 	}
 	if len(project.Modules) > 0 {
 		names := make([]string, 0, len(project.Modules))
@@ -1546,6 +1619,16 @@ func (a *app) projectDetailLines() []string {
 		lines = append(lines, "Modules: "+strings.Join(names, ", "))
 	}
 	return lines
+}
+
+func latestTaskUpdate(tasks []models.Task) time.Time {
+	var latest time.Time
+	for _, task := range tasks {
+		if task.UpdatedAt.After(latest) {
+			latest = task.UpdatedAt
+		}
+	}
+	return latest
 }
 
 func box(title string, body []string, width, height int, active bool) []string {
@@ -1577,6 +1660,57 @@ func tableHeader(content string, width int) string {
 		Foreground(lipgloss.Color("252")).
 		Background(lipgloss.Color("239")).
 		Render(ansi.Truncate(content, width, "…"))
+}
+
+func taskTableHeader(width int) string {
+	if width < 58 {
+		return fmt.Sprintf("  %-3s %-3s %-6s %-5s %-5s %s", "SEL", "ST", "ID", "CRTD", "UPDTD", "TITLE")
+	}
+	return fmt.Sprintf("  %-3s %-7s %-8s %-10s %-10s %s", "SEL", "STATUS", "ID", "CREATED", "UPDATED", "TITLE")
+}
+
+func taskTableRow(mark string, task models.Task, width int) string {
+	if width < 58 {
+		return fmt.Sprintf("  %-3s %-3s %-6s %-5s %-5s %s",
+			mark, compactTaskStatus(task.Status), compactID(task.ID, 6), compactDate(task.CreatedAt), compactDate(task.UpdatedAt), task.Title)
+	}
+	return fmt.Sprintf("  %-3s %-7s %-8s %-10s %-10s %s",
+		mark, task.Status, compactID(task.ID, 8), displayDate(task.CreatedAt), displayDate(task.UpdatedAt), task.Title)
+}
+
+func compactTaskStatus(status models.TaskStatus) string {
+	switch status {
+	case models.StatusDoing:
+		return "DNG"
+	case models.StatusDone:
+		return "DON"
+	case models.StatusBlocked:
+		return "BLK"
+	default:
+		return "TDO"
+	}
+}
+
+func compactID(id string, width int) string {
+	if utf8.RuneCountInString(id) <= width {
+		return id
+	}
+	runes := []rune(id)
+	return string(runes[:width])
+}
+
+func displayDate(value time.Time) string {
+	if value.IsZero() {
+		return "—"
+	}
+	return value.Format("2006-01-02")
+}
+
+func compactDate(value time.Time) string {
+	if value.IsZero() {
+		return "—"
+	}
+	return value.Format("01-02")
 }
 
 func tableRow(content string, width, row int, selected bool, foreground string) string {
