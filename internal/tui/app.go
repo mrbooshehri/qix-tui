@@ -399,6 +399,11 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 			return false, fmt.Errorf("select a task to edit")
 		}
 		a.startTaskEditForm()
+	case key.r == 'e' && a.focus == 3:
+		if len(a.tasks) == 0 {
+			return false, fmt.Errorf("select a task to edit")
+		}
+		a.startTaskEditForm()
 	case key.r == 'n':
 		if a.project == nil {
 			return false, fmt.Errorf("create a project first with p")
@@ -448,6 +453,8 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	case key.r == 'C' && a.focus == 2:
 		return false, a.completeTask()
 	case key.r == 't' && a.focus == 2:
+		return false, a.startTimeLogForm()
+	case key.r == 't' && a.focus == 3:
 		return false, a.startTimeLogForm()
 	case key.r == 'o' && a.focus == 2:
 		return false, a.openSelectedJira()
@@ -1525,9 +1532,20 @@ func (a *app) taskDetailLines(item taskItem) []string {
 		if task.JiraIssue != "" {
 			lines = append(lines, "  Jira: "+task.JiraIssue)
 		}
-		if len(task.TimeEntries) > 0 {
-			lines = append(lines, fmt.Sprintf("  Time log: %d entries", len(task.TimeEntries)))
+	}
+	lines = append(lines, detailHeading("TIME LOG"))
+	if len(task.TimeEntries) == 0 {
+		lines = append(lines, "  No time entries yet. Press t to log time.")
+	} else {
+		lines = append(lines, dim+"  DATE          HOURS   LOGGED AT"+reset)
+		for i, entry := range task.TimeEntries {
+			logged := "—"
+			if !entry.LoggedAt.IsZero() {
+				logged = entry.LoggedAt.Format("2006-01-02 15:04")
+			}
+			lines = append(lines, tableRow(fmt.Sprintf("  %-12s %6.2fh   %s", entry.Date, entry.Hours, logged), a.detailWidth(), i, false, ""))
 		}
+		lines = append(lines, dim+"  Press e here to edit the task total, or t to add an entry."+reset)
 	}
 	return lines
 }

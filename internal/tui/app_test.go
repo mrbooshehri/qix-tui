@@ -248,6 +248,17 @@ func TestReconcileActualHoursAdjustsNewestEntries(t *testing.T) {
 	}
 }
 
+func TestTaskDetailsShowTimeLogTable(t *testing.T) {
+	a := &app{width: 100}
+	task := models.Task{ID: "t1", Title: "Build", EstimatedHours: 4, TimeEntries: []models.TimeEntry{{Date: "2026-09-29", Hours: 1.5}}}
+	details := strings.Join(a.taskDetailLines(taskItem{task: task, location: "project"}), "\n")
+	for _, expected := range []string{"TIME LOG", "DATE", "2026-09-29", "1.50h", "Press e here to edit"} {
+		if !strings.Contains(details, expected) {
+			t.Errorf("task details missing %q:\n%s", expected, details)
+		}
+	}
+}
+
 func TestTaskMultiSelectChangesStatusAcrossScopes(t *testing.T) {
 	t.Setenv("QIX_DIR", t.TempDir())
 	if err := config.Init(); err != nil {

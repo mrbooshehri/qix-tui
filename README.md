@@ -110,7 +110,7 @@ Workspace controls:
 | `n` | Create a task in the selected project or module |
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |
-| `e` | Edit the focused project, module, or task (including a task's actual hours) |
+| `e` | Edit the focused project, module, or task (including a task's actual hours); Details focus edits the selected task |
 | `Space` | Mark or unmark the focused task for bulk actions |
 | `a` | Mark or unmark every task in the visible project/module scope |
 | `d` | Delete marked tasks (or the focused item); task deletion uses Enter/Esc confirmation |
@@ -131,6 +131,8 @@ Workspace controls:
 | `Ctrl-G` | Cancel a modal form |
 
 Every modal shows all of its fields together; `↑`/`↓`, `Tab`, and `Shift-Tab` move between fields, and compact terminals scroll the form to keep the active field visible. Project names, descriptions, and tags are editable, as are module names/descriptions/tags, sprint names/dates, and all task metadata. Renaming a project also updates its filename, task index, and active tracking path.
+
+Task details include a time-log table with entry dates, hours, and logged timestamps. Focus Details and press `e` to edit the task's actual-hours total, or `t` to add another time entry; all totals and charts refresh from the edited log.
 
 List panes use alternating table rows, status colors, and a highlighted cursor row. Task rows include `[ ]`/`[x]` selection markers; selections remain active while moving between modules in the same project so one bulk action can span scopes. Every pane is vertically scrollable, including task details and long report or health views.
 
