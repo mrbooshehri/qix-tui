@@ -507,7 +507,7 @@ func (a *app) reportLines() []string {
 		lines = append(lines,
 			"PROJECT SCORECARD",
 			tableHeader("  METRIC                     VALUE        SIGNAL", max(1, a.width-2)),
-			tableRow(fmt.Sprintf("  %-26s %8d      %s", "Tasks", len(tasks), progressBar(a.project.GetCompletionPercentage(), 16)), max(1, a.width-2), 0, false, ""),
+			tableRow(fmt.Sprintf("  %-26s %8d      %s", "Tasks", len(tasks), inlineChart(a.project.GetCompletionPercentage(), 16, "42")), max(1, a.width-2), 0, false, ""),
 			tableRow(fmt.Sprintf("  %-26s %7.2fh      %s", "Estimated", estimated, budgetSignal(actual, estimated)), max(1, a.width-2), 1, false, ""),
 			tableRow(fmt.Sprintf("  %-26s %7.2fh      variance %+.2fh", "Actual", actual, actual-estimated), max(1, a.width-2), 2, false, ""),
 			tableRow(fmt.Sprintf("  %-26s %7.1f%%      %d module(s)", "Complete", a.project.GetCompletionPercentage(), len(a.project.Modules)), max(1, a.width-2), 3, false, ""),
@@ -727,6 +727,12 @@ func chartRow(label string, value, maximum float64, width int, display, color st
 	filled := int(ratio * float64(width))
 	bar := "\x1b[38;5;" + color + "m" + strings.Repeat("█", filled) + reset + dim + strings.Repeat("░", width-filled) + reset
 	return fmt.Sprintf("  %-14s %s  %s", label, bar, display)
+}
+
+func inlineChart(percent float64, width int, color string) string {
+	percent = float64(clamp(int(percent+0.5), 0, 100))
+	filled := int(percent / 100 * float64(width))
+	return "\x1b[38;5;" + color + "m" + strings.Repeat("█", filled) + reset + dim + strings.Repeat("░", width-filled) + reset + fmt.Sprintf(" %4.1f%%", percent)
 }
 
 func sortedFloatKeys(values map[string]float64) []string {

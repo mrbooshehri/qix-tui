@@ -1458,7 +1458,7 @@ func (a *app) taskDetailLines(item taskItem) []string {
 		detailHeading("OVERVIEW"),
 		fmt.Sprintf("  Status: %s    Priority: %s    Location: %s", task.Status, task.Priority, item.location),
 		fmt.Sprintf("  Estimate: %.2fh    Actual: %.2fh    Variance: %+.2fh", task.EstimatedHours, actual, actual-task.EstimatedHours),
-		fmt.Sprintf("  Effort: %s %.1f%%", progressBar(percent, 20), percent),
+		chartRow("Effort", actual, maxFloat(task.EstimatedHours, 1), 20, fmt.Sprintf("%.1f%%", percent), "44"),
 		detailHeading("DATES"),
 		fmt.Sprintf("  Created: %s    Updated: %s", detailTime(task.CreatedAt), detailTime(task.UpdatedAt)),
 	}
@@ -1566,7 +1566,7 @@ func (a *app) moduleDetailLines() []string {
 		detailHeading("OVERVIEW"),
 		fmt.Sprintf("Tasks: %d    Todo: %d    Doing: %d    Done: %d    Blocked: %d", len(module.Tasks), counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
 		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", estimated, actual),
-		fmt.Sprintf("Completion: %s %.1f%%", progressBar(completion, 20), completion),
+		chartRow("Completion", float64(counts[models.StatusDone]), float64(max(1, len(module.Tasks))), 20, fmt.Sprintf("%.1f%%", completion), "42"),
 	}
 	if module.Description != "" {
 		lines = append(lines, detailHeading("DESCRIPTION"))
@@ -1596,7 +1596,7 @@ func (a *app) projectDetailLines() []string {
 		fmt.Sprintf("Tasks: %d    Modules: %d    Sprints: %d", len(project.GetAllTasks()), len(project.Modules), len(project.Sprints)),
 		fmt.Sprintf("Todo: %d    Doing: %d    Done: %d    Blocked: %d", counts[models.StatusTodo], counts[models.StatusDoing], counts[models.StatusDone], counts[models.StatusBlocked]),
 		fmt.Sprintf("Estimated: %.2fh    Actual: %.2fh", project.CalculateTotalEstimated(), project.CalculateTotalActual()),
-		fmt.Sprintf("Completion: %s %.1f%%", progressBar(project.GetCompletionPercentage(), 20), project.GetCompletionPercentage()),
+		chartRow("Completion", float64(counts[models.StatusDone]), float64(max(1, len(project.GetAllTasks()))), 20, fmt.Sprintf("%.1f%%", project.GetCompletionPercentage()), "42"),
 	}
 	if project.Description != "" {
 		lines = append(lines, detailHeading("DESCRIPTION"))

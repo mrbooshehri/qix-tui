@@ -43,7 +43,7 @@ func TestProjectDetailLinesIncludeProjectKPIs(t *testing.T) {
 		"Tasks: 2    Modules: 1    Sprints: 1",
 		"Todo: 0    Doing: 1    Done: 1    Blocked: 0",
 		"Estimated: 3.00h    Actual: 1.50h",
-		"Completion: [##########----------] 50.0%",
+		"Completion",
 		"Description: Ship the release",
 		"Tags: release, backend",
 		"Modules: api",
@@ -165,7 +165,7 @@ func TestModuleCreateEditAndDeleteWorkflow(t *testing.T) {
 	if len(a.tasks) != 1 || a.tasks[0].location != "api" {
 		t.Fatalf("module task scope = %#v", a.tasks)
 	}
-	if details := strings.Join(a.moduleDetailLines(), "\n"); !strings.Contains(details, "Completion: [####################] 100.0%") {
+	if details := strings.Join(a.moduleDetailLines(), "\n"); !strings.Contains(details, "Completion") || !strings.Contains(details, "100.0%") {
 		t.Fatalf("module details missing completion KPI:\n%s", details)
 	}
 

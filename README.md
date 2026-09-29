@@ -134,7 +134,7 @@ Every modal shows all of its fields together; `↑`/`↓`, `Tab`, and `Shift-Tab
 
 List panes use alternating table rows, status colors, and a highlighted cursor row. Task rows include `[ ]`/`[x]` selection markers; selections remain active while moving between modules in the same project so one bulk action can span scopes. Every pane is vertically scrollable, including task details and long report or health views.
 
-The workspace task table shows created and updated dates (switching to compact month-day columns on narrow terminals). The Details pane groups overview, effort, dates, descriptions, labels, relationships, and links for the selected project, module, or task, with the selected item's latest activity surfaced near the top.
+The workspace task table shows created and updated dates (switching to compact month-day columns on narrow terminals). The Details pane groups overview, effort, dates, descriptions, labels, relationships, and links for the selected project, module, or task, with the selected item's latest activity surfaced near the top. Effort and completion use the same colored block charts as Tracking, including the project/module details and the Reports overview scorecard.
 
 Screen-specific controls:
 
