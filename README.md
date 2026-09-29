@@ -106,7 +106,7 @@ Workspace controls:
 | --- | --- |
 | `↑` / `↓`, `j` / `k` | Move or vertically scroll the focused pane |
 | `Page Up` / `Page Down`, `Home` / `End` | Scroll a page or jump to a boundary |
-| `Tab`, `←` / `→` | Change focus between projects, modules, tasks, and details |
+| `Tab` / `Shift-Tab`, `←` / `→` | Change focus forward/backward between projects, modules, tasks, and details |
 | `n` | Create a task in the selected project or module |
 | `p` | Create a project with a name, description, and tags |
 | `m` | Create a module with a name, description, and tags |

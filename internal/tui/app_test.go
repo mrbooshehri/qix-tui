@@ -268,6 +268,18 @@ func TestDeleteBackwardWord(t *testing.T) {
 	}
 }
 
+func TestShiftTabCyclesWorkspaceFocusBackward(t *testing.T) {
+	a := &app{section: sectionWorkspace, focus: 0}
+	for _, want := range []int{3, 2, 1, 0} {
+		if _, err := a.updateKey(keyEvent{name: "shift-tab"}); err != nil {
+			t.Fatalf("shift-tab returned error: %v", err)
+		}
+		if a.focus != want {
+			t.Fatalf("focus after shift-tab = %d, want %d", a.focus, want)
+		}
+	}
+}
+
 func TestTaskMultiSelectChangesStatusAcrossScopes(t *testing.T) {
 	t.Setenv("QIX_DIR", t.TempDir())
 	if err := config.Init(); err != nil {

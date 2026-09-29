@@ -352,6 +352,9 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	case key.name == "tab":
 		a.focus = (a.focus + 1) % 4
 		a.detailScroll = 0
+	case key.name == "shift-tab":
+		a.focus = (a.focus + 3) % 4
+		a.detailScroll = 0
 	case key.name == "left":
 		a.focus = max(0, a.focus-1)
 	case key.name == "right":
