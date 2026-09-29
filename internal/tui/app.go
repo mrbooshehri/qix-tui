@@ -79,6 +79,7 @@ type app struct {
 	reportIndex      int
 	backupIndex      int
 	detailScroll     int
+	timeEntryIndex   int
 	sectionScroll    int
 	selectedTasks    map[string]bool
 	selectionProject string
@@ -168,6 +169,8 @@ func bubbleKey(msg tea.KeyMsg) keyEvent {
 		return keyEvent{name: "cancel"}
 	case tea.KeyCtrlS:
 		return keyEvent{name: "save"}
+	case tea.KeyCtrlW:
+		return keyEvent{name: "ctrl-w"}
 	case tea.KeyEsc:
 		return keyEvent{name: "esc"}
 	case tea.KeyTab:
@@ -463,6 +466,9 @@ func (a *app) updateKey(key keyEvent) (bool, error) {
 	case key.r == 'a' && a.focus == 2:
 		return false, a.toggleAllVisibleTasks()
 	case key.r == 'x':
+		if a.focus == 3 {
+			return false, a.removeSelectedTimeEntry()
+		}
 		return false, a.cycleStatus()
 	case key.r >= '1' && key.r <= '4':
 		statuses := []models.TaskStatus{models.StatusTodo, models.StatusDoing, models.StatusDone, models.StatusBlocked}
@@ -587,6 +593,40 @@ func (a *app) startTimeLogForm() error {
 	return nil
 }
 
+func deleteBackwardWord(value []rune) []rune {
+	end := len(value)
+	for end > 0 && value[end-1] == ' ' {
+		end--
+	}
+	for end > 0 && value[end-1] != ' ' {
+		end--
+	}
+	return value[:end]
+}
+
+func (a *app) removeSelectedTimeEntry() error {
+	if len(a.tasks) == 0 {
+		return fmt.Errorf("select a task first")
+	}
+	task := a.tasks[a.taskIndex].task
+	if len(task.TimeEntries) == 0 {
+		return fmt.Errorf("selected task has no time entries")
+	}
+	index := clamp(a.timeEntryIndex, 0, len(task.TimeEntries)-1)
+	entry := task.TimeEntries[index]
+	if err := a.store.RemoveTimeEntry(a.project.Name, task.ID, index); err != nil {
+		return err
+	}
+	if err := a.loadProject(); err != nil {
+		return err
+	}
+	if len(a.tasks) > 0 {
+		a.timeEntryIndex = clamp(index, 0, max(0, len(a.tasks[a.taskIndex].task.TimeEntries)-1))
+	}
+	a.message = fmt.Sprintf("Removed %.2fh from %s", entry.Hours, task.ID)
+	return nil
+}
+
 func (a *app) removeRecurrence() error {
 	if len(a.tasks) == 0 {
 		return fmt.Errorf("select a task first")
@@ -646,6 +686,8 @@ func (a *app) updateForm(key keyEvent) error {
 		if len(field.value) > 0 {
 			field.value = field.value[:len(field.value)-1]
 		}
+	case "ctrl-w":
+		field.value = deleteBackwardWord(field.value)
 	case "enter":
 		if field.required && strings.TrimSpace(string(field.value)) == "" {
 			return fmt.Errorf("%s cannot be empty", strings.ToLower(field.label))
@@ -1108,8 +1150,12 @@ func (a *app) move(delta int) error {
 	if a.focus == 2 && len(a.tasks) > 0 {
 		a.taskIndex = clamp(a.taskIndex+delta, 0, len(a.tasks)-1)
 		a.detailScroll = 0
+		a.timeEntryIndex = 0
 	}
 	if a.focus == 3 {
+		if len(a.tasks) > 0 && len(a.tasks[a.taskIndex].task.TimeEntries) > 0 {
+			a.timeEntryIndex = clamp(a.timeEntryIndex+delta, 0, len(a.tasks[a.taskIndex].task.TimeEntries)-1)
+		}
 		visible := max(1, a.detailPaneHeight()-2)
 		a.detailScroll = clamp(a.detailScroll+delta, 0, max(0, len(a.detailLines())-visible))
 	}
@@ -1469,7 +1515,7 @@ func (a *app) detailLines() []string {
 			"e: edit selected item    d: remove selected item",
 			"r: refresh from disk",
 			"space: mark task    a: mark/unmark visible tasks    esc: clear marks",
-			"x: cycle status    1-4: set status for marked/current task",
+			"x: cycle status (or remove selected time entry in Details)    1-4: set status for marked/current task",
 			"l: set parent    y: add dependency    c/u: set/remove recurrence",
 			"C: complete task    t: log time    o: open Jira issue",
 			"1 todo  2 doing  3 done  4 blocked",
@@ -1543,9 +1589,9 @@ func (a *app) taskDetailLines(item taskItem) []string {
 			if !entry.LoggedAt.IsZero() {
 				logged = entry.LoggedAt.Format("2006-01-02 15:04")
 			}
-			lines = append(lines, tableRow(fmt.Sprintf("  %-12s %6.2fh   %s", entry.Date, entry.Hours, logged), a.detailWidth(), i, false, ""))
+			lines = append(lines, tableRow(fmt.Sprintf("  %-12s %6.2fh   %s", entry.Date, entry.Hours, logged), a.detailWidth(), i, i == a.timeEntryIndex, "44"))
 		}
-		lines = append(lines, dim+"  Press e here to edit the task total, or t to add an entry."+reset)
+		lines = append(lines, dim+"  ↑/↓ select entry  •  x remove selected  •  e edit total  •  t add"+reset)
 	}
 	return lines
 }

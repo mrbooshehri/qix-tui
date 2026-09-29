@@ -271,6 +271,17 @@ func (s *Storage) AddTimeEntry(projectName, taskID string, entry models.TimeEntr
 	})
 }
 
+// RemoveTimeEntry removes one time entry from a task by zero-based index.
+func (s *Storage) RemoveTimeEntry(projectName, taskID string, index int) error {
+	return s.UpdateTask(projectName, taskID, func(task *models.Task) error {
+		if index < 0 || index >= len(task.TimeEntries) {
+			return fmt.Errorf("time entry %d not found", index+1)
+		}
+		task.TimeEntries = append(task.TimeEntries[:index], task.TimeEntries[index+1:]...)
+		return nil
+	})
+}
+
 // SetTaskRecurrence sets or updates recurrence for a task
 func (s *Storage) SetTaskRecurrence(projectName, taskID string, recurrence models.Recurrence) error {
 	return s.UpdateTask(projectName, taskID, func(t *models.Task) error {

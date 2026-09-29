@@ -132,7 +132,7 @@ Workspace controls:
 
 Every modal shows all of its fields together; `↑`/`↓`, `Tab`, and `Shift-Tab` move between fields, and compact terminals scroll the form to keep the active field visible. Project names, descriptions, and tags are editable, as are module names/descriptions/tags, sprint names/dates, and all task metadata. Renaming a project also updates its filename, task index, and active tracking path.
 
-Task details include a time-log table with entry dates, hours, and logged timestamps. Focus Details and press `e` to edit the task's actual-hours total, or `t` to add another time entry; all totals and charts refresh from the edited log.
+Task details include a time-log table with entry dates, hours, and logged timestamps. Focus Details and use `↑`/`↓` to select an entry, `x` to remove it, `e` to edit the task's actual-hours total, or `t` to add another time entry. In any modal, `Ctrl-W` deletes the previous word in the active field; all totals and charts refresh from the edited log.
 
 List panes use alternating table rows, status colors, and a highlighted cursor row. Task rows include `[ ]`/`[x]` selection markers; selections remain active while moving between modules in the same project so one bulk action can span scopes. Every pane is vertically scrollable, including task details and long report or health views.
 

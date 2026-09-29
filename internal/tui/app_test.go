@@ -252,10 +252,19 @@ func TestTaskDetailsShowTimeLogTable(t *testing.T) {
 	a := &app{width: 100}
 	task := models.Task{ID: "t1", Title: "Build", EstimatedHours: 4, TimeEntries: []models.TimeEntry{{Date: "2026-09-29", Hours: 1.5}}}
 	details := strings.Join(a.taskDetailLines(taskItem{task: task, location: "project"}), "\n")
-	for _, expected := range []string{"TIME LOG", "DATE", "2026-09-29", "1.50h", "Press e here to edit"} {
+	for _, expected := range []string{"TIME LOG", "DATE", "2026-09-29", "1.50h", "x remove selected", "e edit total"} {
 		if !strings.Contains(details, expected) {
 			t.Errorf("task details missing %q:\n%s", expected, details)
 		}
+	}
+}
+
+func TestDeleteBackwardWord(t *testing.T) {
+	if got := string(deleteBackwardWord([]rune("alpha beta  "))); got != "alpha " {
+		t.Fatalf("deleteBackwardWord() = %q", got)
+	}
+	if got := string(deleteBackwardWord([]rune("alpha"))); got != "" {
+		t.Fatalf("deleteBackwardWord(single word) = %q", got)
 	}
 }
 
